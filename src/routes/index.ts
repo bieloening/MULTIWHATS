@@ -8,4 +8,5 @@ export function definirRotas(app) {
     app.post('/conexoes', controladorIndex.adicionarConexao.bind(controladorIndex));
     app.delete('/conexoes', controladorIndex.removerConexao.bind(controladorIndex));
     app.get('/conexoes', controladorIndex.listarConexoes.bind(controladorIndex));
+    app.get('/qrcode/:idConta', controladorIndex.obterQRCode.bind(controladorIndex));
 }
