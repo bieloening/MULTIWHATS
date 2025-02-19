@@ -1,0 +1,11 @@
+services:
+  whatsapp:
+    build: .
+    container_name: whatsapp-customer-service
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+    environment:
+      - NODE_ENV=production
