@@ -1,10 +1,13 @@
 import { Client, LocalAuth } from 'whatsapp-web.js';
+import QRCode from 'qrcode';
 
 class ServicoWhatsApp {
     private conexoes: Map<string, Client>;
+    private qrCodes: Map<string, string>;
 
     constructor() {
         this.conexoes = new Map();
+        this.qrCodes = new Map();
     }
 
     adicionarConexao(id: string, cliente: Client) {
@@ -19,21 +22,28 @@ class ServicoWhatsApp {
         this.conexoes.delete(id);
     }
 
-    obterConexao(id: string) {
+    obterConexao(id: string): Client | undefined {
         return this.conexoes.get(id);
     }
 
-    listarConexoes() {
+    listarConexoes(): string[] {
         return Array.from(this.conexoes.keys());
     }
 
     conectar(idConta: string): void {
+        console.log(`Conectando conta: ${idConta}`);
         const cliente = new Client({
-            authStrategy: new LocalAuth({ clientId: idConta })
+            authStrategy: new LocalAuth({ clientId: idConta }),
+            puppeteer: {
+                args: ['--no-sandbox', '--disable-setuid-sandbox']
+            }
         });
 
-        cliente.on('qr', (qr) => {
+        cliente.on('qr', async (qr) => {
             console.log(`QR Code para ${idConta}:`, qr);
+            const qrCodeDataURL = await QRCode.toDataURL(qr);
+            this.qrCodes.set(idConta, qrCodeDataURL);
+            console.log(`QR Code armazenado para ${idConta}`);
         });
 
         cliente.on('ready', () => {
@@ -62,17 +72,28 @@ class ServicoWhatsApp {
         console.log(`Desconectado da conta WhatsApp: ${idConta}`);
     }
 
-    enviarMensagem(idConta: string, para: string, mensagem: string): void {
+    async enviarMensagem(idConta: string, para: string, mensagem: string): Promise<void> {
         const cliente = this.obterConexao(idConta);
         if (cliente) {
-            cliente.sendMessage(para, mensagem).then(() => {
+            // Verificar o formato do número de telefone
+            if (!/^\d+$/.test(para)) {
+                console.error(`Número de telefone inválido: ${para}`);
+                return;
+            }
+
+            try {
+                await cliente.sendMessage(`${para}@c.us`, mensagem);
                 console.log(`Mensagem enviada de ${idConta} para ${para}: ${mensagem}`);
-            }).catch(err => {
+            } catch (err) {
                 console.error(`Falha ao enviar mensagem de ${idConta} para ${para}:`, err);
-            });
+            }
         } else {
             console.log(`Nenhuma conexão encontrada para a conta: ${idConta}`);
         }
+    }
+
+    obterQRCode(idConta: string): string | undefined {
+        return this.qrCodes.get(idConta);
     }
 }
 
