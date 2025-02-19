@@ -4,6 +4,8 @@
 
 This project centralizes customer service through multiple WhatsApp connections, allowing businesses to manage customer interactions efficiently without relying on the official WhatsApp application.
 
+Este projeto centraliza o atendimento ao cliente por meio de várias conexões do WhatsApp, permitindo que as empresas gerenciem interações com clientes de forma eficiente, sem depender do aplicativo oficial do WhatsApp.
+
 ## Project Structure
 
 ```
@@ -23,6 +25,24 @@ whatsapp-customer-service
 ├── package.json              # npm configuration file
 ├── tsconfig.json             # TypeScript configuration file
 └── README.md                 # Project documentation
+
+whatsapp-customer-service
+├── src
+│   ├── app.ts                # Ponto de entrada da aplicação
+│   ├── controllers           # Contém os controladores para lidar com requisições
+│   │   └── index.ts
+│   ├── routes                # Define as rotas da API
+│   │   └── index.ts
+│   ├── services              # Gerencia as conexões do WhatsApp
+│   │   └── whatsappService.ts
+│   └── types                 # Definições de tipos para requisições e respostas
+│       └── index.ts
+├── docker-compose.yml        # Configuração do Docker para a aplicação
+├── Dockerfile                # Instruções para construir a imagem Docker
+├── package.json              # Arquivo de configuração do npm
+├── tsconfig.json             # Arquivo de configuração do TypeScript
+└── README.md                 # Documentação do projeto
+
 ```
 
 ## Setup Instructions
@@ -60,3 +80,4 @@ Contributions are welcome! Please submit a pull request or open an issue for any
 ## License
 
 This project is licensed under the MIT License. See the LICENSE file for details.
+
