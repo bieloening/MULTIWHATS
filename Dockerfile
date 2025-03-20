@@ -1,53 +1,23 @@
-# Usa a imagem oficial do Node.js
+# Use a Node.js base image
 FROM node:18
 
-# Instala as dependências necessárias para o Puppeteer
-RUN apt-get update && apt-get install -y \
-    libnss3 \
-    libatk-bridge2.0-0 \
-    libx11-xcb1 \
-    libxcomposite1 \
-    libxcursor1 \
-    libxdamage1 \
-    libxrandr2 \
-    libgbm1 \
-    libasound2 \
-    libpangocairo-1.0-0 \
-    libatk1.0-0 \
-    libcups2 \
-    libdrm2 \
-    libxss1 \
-    libgdk-pixbuf2.0-0 \
-    libgtk-3-0 \
-    libpango-1.0-0 \
-    libxrandr2 \
-    libgbm1 \
-    libasound2 \
-    libpangocairo-1.0-0 \
-    libatk1.0-0 \
-    libcups2 \
-    libdrm2 \
-    libxss1 \
-    libgdk-pixbuf2.0-0 \
-    libgtk-3-0
-
-# Define o diretório de trabalho dentro do container
+# Set the working directory
 WORKDIR /app
 
-# Copia os arquivos package.json e package-lock.json para instalar dependências
+# Copy package.json and package-lock.json
 COPY package*.json ./
 
-# Instala as dependências do projeto
+# Install dependencies
 RUN npm install
 
-# Copia todo o código do projeto para dentro do container
+# Copy the rest of the application code
 COPY . .
 
-# Compila o código TypeScript
+# Build the application
 RUN npm run build
 
-# Expõe a porta 3000 para comunicação externa
+# Expose the port the app runs on
 EXPOSE 3000
 
-# Comando para iniciar a aplicação
+# Start the application
 CMD ["npm", "start"]
