@@ -6,4 +6,4 @@ dist/
 
 # Docker
 docker-compose.override.yml
-*.dockerfile
+*.dockerfile.wwebjs_cache
