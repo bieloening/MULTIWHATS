@@ -91,12 +91,6 @@ li {
     align-items: center;
 }
 
-img {
-    display: block;
-    margin: 20px auto;
-    max-width: 100%;
-}
-
 .modal {
     display: flex;
     justify-content: center;

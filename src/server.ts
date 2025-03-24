@@ -159,33 +159,64 @@ app.post('/api/ativar', (req, res) => {
             }
         });
 
+        // Armazenar mensagens recebidas no banco de dados
         cliente.on('message', async (msg) => {
+            if (msg.from === 'status@broadcast') {
+                console.log('Mensagem ignorada: status@broadcast');
+                return; // Ignorar mensagens de broadcast
+            }
+
             if (!mensagensProcessadas.has(msg.id._serialized)) {
                 console.log('MESSAGE RECEIVED', msg);
+
+                const isMe = msg.from === cliente.info.wid._serialized;
+
+                let mediaUrl: string | null = null; // Update the type to allow both string and null
+                if (msg.hasMedia) {
+                    try {
+                        const media = await msg.downloadMedia();
+                        if (media) {
+                            // Salvar a mídia em um diretório local ou em um serviço de armazenamento
+                            const filePath = path.join(__dirname, 'media', `${msg.id._serialized}.${media.mimetype.split('/')[1]}`);
+                            fs.writeFileSync(filePath, media.data, 'base64');
+                            mediaUrl = `/media/${msg.id._serialized}.${media.mimetype.split('/')[1]}`;
+                        }
+                    } catch (error) {
+                        console.error('Erro ao baixar mídia:', error);
+                    }
+                }
+
                 io.emit('messageReceived', {
-                    id: msg.id._serialized,
+                    idConexao: id,
                     from: msg.from,
                     body: msg.body,
                     timestamp: msg.timestamp,
+                    isMe,
+                    mediaUrl,
                 });
-                mensagensProcessadas.add(msg.id._serialized); // Marque a mensagem como processada
 
-                // Verificar se a mensagem já existe no banco de dados
-                const conexao = await pool.getConnection();
-                const [rows] = await conexao.execute(
-                    'SELECT id FROM mensagens WHERE id = ?',
-                    [msg.id._serialized]
-                );
+                mensagensProcessadas.add(msg.id._serialized);
 
-                if ((rows as mysql.RowDataPacket[]).length === 0) {
-                    // Salvar mensagem no banco de dados
-                    await conexao.execute(
-                        'INSERT INTO mensagens (id, origem, destino, corpo, timestamp) VALUES (?, ?, ?, ?, ?)',
-                        [msg.id._serialized, msg.from, msg.to, msg.body, msg.timestamp]
+                try {
+                    const conexao = await pool.getConnection();
+                    const mensagemId = msg.id._serialized;
+
+                    const [rows] = await conexao.execute(
+                        'SELECT id FROM mensagens WHERE id = ?',
+                        [mensagemId]
                     );
-                }
 
-                conexao.release();
+                    if ((rows as mysql.RowDataPacket[]).length === 0) {
+                        await conexao.execute(
+                            'INSERT INTO mensagens (id, origem, destino, corpo, timestamp) VALUES (?, ?, ?, ?, ?)',
+                            [mensagemId, msg.from, msg.to, msg.body, msg.timestamp]
+                        );
+                    }
+
+                    conexao.release();
+                } catch (error) {
+                    console.error('Erro ao salvar mensagem no banco de dados:', error);
+                }
             }
         });
 
@@ -347,7 +378,7 @@ app.get('/api/foto-perfil/:numero', async (req, res) => {
     }
 });
 
-// Obter histórico de conversas
+// Ajustar a consulta SQL para recuperar mensagens enviadas e recebidas
 app.get('/api/historico-conversas/:id', async (req, res) => {
     const { id } = req.params;
     console.log('GET /api/historico-conversas/:id', id);
@@ -355,31 +386,34 @@ app.get('/api/historico-conversas/:id', async (req, res) => {
     try {
         const conexao = await pool.getConnection();
         const [rows] = await conexao.execute(
-            'SELECT * FROM mensagens WHERE origem = ? OR destino = ? ORDER BY timestamp ASC',
+            `SELECT * FROM mensagens 
+             WHERE origem = ? OR destino = ? 
+             ORDER BY timestamp ASC`,
             [id, id]
         );
         conexao.release();
 
         const conversas = (rows as mysql.RowDataPacket[]).reduce((acc, row) => {
-            const numero = row.origem === id ? row.destino : row.origem;
-            if (!acc[numero]) {
-                acc[numero] = {
-                    id: numero,
-                    name: numero,
-                    number: numero,
+            const numero = row.origem === id ? row.destino : row.origem; // Identifica o outro participante da conversa
+            const numeroNormalizado = numero.replace('@c.us', ''); // Remove o sufixo @c.us para padronizar
+            if (!acc[numeroNormalizado]) {
+                acc[numeroNormalizado] = {
+                    id: numeroNormalizado,
+                    name: numeroNormalizado,
+                    number: numeroNormalizado,
                     messages: [],
                     unread: 0,
                     active: false,
                     profilePicUrl: null,
                 };
             }
-            acc[numero].messages.push({
+            acc[numeroNormalizado].messages.push({
                 id: row.id,
-                from: row.origem,
-                to: row.destino,
+                from: row.origem.replace('@c.us', ''), // Normaliza o número do remetente
+                to: row.destino.replace('@c.us', ''), // Normaliza o número do destinatário
                 body: row.corpo,
                 timestamp: row.timestamp,
-                isMe: row.origem === id, // Adiciona um campo para identificar se a mensagem foi enviada por você
+                isMe: row.origem === id, // Identifica se a mensagem foi enviada por você
             });
             return acc;
         }, {} as { [key: string]: any });
@@ -482,6 +516,9 @@ app.post('/api/mensagens', async (req, res) => {
         res.status(404).json({ message: 'Conexão não encontrada' });
     }
 });
+
+// Servir arquivos de mídia
+app.use('/media', express.static(path.join(__dirname, 'media')));
 
 // Rota para servir o frontend React (caso seja um SPA)
 app.get('*', (req, res) => {

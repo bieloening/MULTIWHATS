@@ -29,6 +29,10 @@ const Chat: React.FC = () => {
     const [conversaSelecionada, setConversaSelecionada] = useState<Conversa | null>(null);
     const [novaMensagem, setNovaMensagem] = useState<string>('');
 
+    const normalizarNumero = (numero: string): string => {
+        return numero.replace('@c.us', ''); // Remove o sufixo @c.us para padronizar
+    };
+
     const buscarHistoricoConversas = async () => {
         try {
             console.log('Buscando conexões ativas...');
@@ -44,17 +48,19 @@ const Chat: React.FC = () => {
                     return Promise.all(
                         historico.map(async (conversa: any) => {
                             const [nomeContato, urlFotoPerfil] = await Promise.all([
-                                obterNomeContato(conversa.number), // Obter o nome do contato
-                                obterUrlFotoPerfil(conversa.number), // Obter a foto de perfil
+                                obterNomeContato(normalizarNumero(conversa.number)), // Normalizar o número
+                                obterUrlFotoPerfil(normalizarNumero(conversa.number)), // Normalizar o número
                             ]);
                             return {
                                 ...conversa,
-                                name: nomeContato || conversa.number, // Associar o nome do contato
-                                profilePicUrl: urlFotoPerfil, // Associar a foto de perfil
+                                name: nomeContato || normalizarNumero(conversa.number), // Usar o nome ou número normalizado
+                                number: normalizarNumero(conversa.number), // Garantir que o número esteja normalizado
+                                profilePicUrl: urlFotoPerfil,
                                 connectionId: conexao.id,
                                 messages: conversa.messages.map((msg: Mensagem) => ({
                                     ...msg,
-                                    isMe: msg.isMe || false, // Certifique-se de que o campo isMe está presente
+                                    from: normalizarNumero(msg.from), // Normalizar o número do remetente
+                                    isMe: msg.isMe || false,
                                 })),
                             };
                         })
@@ -73,44 +79,50 @@ const Chat: React.FC = () => {
         buscarHistoricoConversas();
 
         const handleMensagemRecebida = async (mensagem: Mensagem) => {
-            console.log('Mensagem recebida:', mensagem);
-            if (mensagem.from.includes('broadcast')) {
-                console.log('Mensagem ignorada (broadcast).');
-                return;
+            if (mensagem.from === 'status@broadcast') {
+                console.log('Mensagem ignorada: status@broadcast');
+                return; // Ignorar mensagens de broadcast
             }
 
+            console.log('Mensagem recebida:', mensagem);
+
+            const numeroNormalizado = normalizarNumero(mensagem.isMe ? mensagem.idConexao : mensagem.from);
+
             const [nomeContato, urlFotoPerfil] = await Promise.all([
-                obterNomeContato(mensagem.from), // Obter o nome do contato
-                obterUrlFotoPerfil(mensagem.from), // Obter a foto de perfil
+                obterNomeContato(numeroNormalizado),
+                obterUrlFotoPerfil(numeroNormalizado),
             ]);
 
             setConversas((prevConversas) => {
-                const conversaExistente = prevConversas.find(conv => conv.number === mensagem.from.replace('@c.us', ''));
+                const conversaExistente = prevConversas.find(conv => conv.number === numeroNormalizado);
                 if (conversaExistente) {
                     console.log('Conversa existente encontrada. Atualizando mensagens...');
-                    // Adiciona a nova mensagem sem sobrescrever as existentes
-                    conversaExistente.messages = [...conversaExistente.messages, { ...mensagem, isMe: false }];
-                    conversaExistente.unread += 1;
+                    conversaExistente.messages = [...conversaExistente.messages, mensagem];
                     return [...prevConversas];
                 } else {
                     console.log('Nova conversa criada para a mensagem recebida.');
                     const novaConversa: Conversa = {
-                        id: `${Date.now()}`, // Gerar um ID único para a conversa
-                        name: nomeContato || mensagem.from.replace('@c.us', ''), // Usar o nome do contato ou o número
-                        number: mensagem.from.replace('@c.us', ''),
-                        messages: [
-                            {
-                                ...mensagem,
-                                isMe: false, // Certifique-se de que a mensagem recebida é marcada como não sendo sua
-                            },
-                        ],
-                        unread: 1,
+                        id: `${Date.now()}`,
+                        name: nomeContato || numeroNormalizado,
+                        number: numeroNormalizado,
+                        messages: [mensagem],
+                        unread: mensagem.isMe ? 0 : 1,
                         active: true,
-                        profilePicUrl: urlFotoPerfil, // Associar a foto de perfil
+                        profilePicUrl: urlFotoPerfil,
                         connectionId: mensagem.idConexao,
                     };
                     return [...prevConversas, novaConversa];
                 }
+            });
+
+            setConversaSelecionada((prevConversa) => {
+                if (prevConversa && prevConversa.number === numeroNormalizado) {
+                    return {
+                        ...prevConversa,
+                        messages: [...prevConversa.messages, mensagem],
+                    };
+                }
+                return prevConversa;
             });
         };
 
@@ -177,26 +189,62 @@ const Chat: React.FC = () => {
 
             const novaMsg: Mensagem = {
                 idConexao,
-                from: 'me',
+                from: 'me', // Ajustar para refletir que a mensagem foi enviada por você
                 body: novaMensagem,
                 timestamp: Date.now(),
-                isMe: true, // Adicionado campo isMe
+                isMe: true, // Certifique-se de que a mensagem enviada é marcada como sua
             };
 
             setConversas((prevConversas) => {
-                const conv = prevConversas.find(conv => conv.id === conversaSelecionada.id);
-                if (conv) {
-                    // Adiciona a nova mensagem sem sobrescrever as existentes
-                    conv.messages = [...conv.messages, novaMsg];
-                    conv.unread = 0;
+                return prevConversas.map((conv) => {
+                    if (conv.number === conversaSelecionada.number) {
+                        return {
+                            ...conv,
+                            messages: [...conv.messages, novaMsg], // Adiciona a nova mensagem
+                            unread: 0, // Zera as notificações
+                        };
+                    }
+                    return conv;
+                });
+            });
+
+            setConversaSelecionada((prevConversa) => {
+                if (prevConversa && prevConversa.number === conversaSelecionada.number) {
+                    return {
+                        ...prevConversa,
+                        messages: [...prevConversa.messages, novaMsg], // Atualiza as mensagens da conversa selecionada
+                    };
                 }
-                return [...prevConversas];
+                return prevConversa;
             });
 
             setNovaMensagem('');
         } catch (error) {
             console.error('Erro ao enviar mensagem:', error);
         }
+    };
+
+    const enviarArquivo = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        if (!conversaSelecionada || !event.target.files?.length) return;
+
+        const arquivo = event.target.files[0];
+        const formData = new FormData();
+        formData.append('file', arquivo);
+        formData.append('idConexao', localStorage.getItem('idConexao') || '');
+        formData.append('numero', conversaSelecionada.number);
+
+        try {
+            await axios.post('http://localhost:3000/api/enviar-arquivo', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            console.log('Arquivo enviado com sucesso!');
+        } catch (error) {
+            console.error('Erro ao enviar arquivo:', error);
+        }
+    };
+
+    const gravarAudio = () => {
+        console.log('Gravação de áudio iniciada (implementar lógica)');
     };
 
     const buscarConexoesAtivas = async () => {
@@ -280,6 +328,21 @@ const Chat: React.FC = () => {
             <div className="messages-container">
                 {conversaSelecionada ? (
                     <>
+                        {/* Barra de informações do contato */}
+                        <div className="contact-info-bar">
+                            {conversaSelecionada.profilePicUrl && (
+                                <img
+                                    src={conversaSelecionada.profilePicUrl}
+                                    alt="Profile"
+                                    className="contact-profile-pic"
+                                />
+                            )}
+                            <div className="contact-details">
+                                <h3>{conversaSelecionada.name}</h3>
+                                <p>{conversaSelecionada.number}</p>
+                            </div>
+                        </div>
+                        {/* Fim da barra de informações do contato */}
                         <div className="messages">
                             {conversaSelecionada.messages.map((mensagem, index) => (
                                 <div
@@ -299,6 +362,18 @@ const Chat: React.FC = () => {
                                 onKeyPress={handleKeyPress}
                                 placeholder="Digite sua mensagem..."
                             />
+                            <input
+                                type="file"
+                                id="file-input"
+                                style={{ display: 'none' }}
+                                onChange={enviarArquivo}
+                            />
+                            <button onClick={gravarAudio}>
+                                <i className="fas fa-microphone"></i>
+                            </button>
+                            <button onClick={() => document.getElementById('file-input')?.click()}>
+                                <i className="fas fa-paperclip"></i>
+                            </button>
                             <button onClick={enviarMensagem}>Enviar</button>
                         </div>
                     </>

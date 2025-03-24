@@ -7,3 +7,7 @@ dist/
 # Docker
 docker-compose.override.yml
 *.dockerfile.wwebjs_cache
+
+# WhatsApp Web Auth
+.wwebjs_auth/
+.wwebjs_cache/
