@@ -182,8 +182,21 @@ button:hover {
     color: white;
 }
 
+.input-container button svg {
+    font-size: 18px;
+    color: white;
+}
+
 .input-container button {
     margin-left: 5px;
+}
+
+.input-container button i.fa-times {
+    color: #d32f2f; /* Vermelho para o botão de cancelar */
+}
+
+.input-container button i.fa-paper-plane {
+    color: #075e54; /* Verde para o botão de enviar */
 }
 
 .inactive-message {
@@ -225,4 +238,16 @@ button:hover {
     margin: 0;
     font-size: 14px;
     color: #666;
+}
+
+.recording-timer {
+    flex: 1;
+    padding: 10px;
+    font-size: 16px;
+    font-weight: bold;
+    color: #d32f2f; /* Vermelho para indicar gravação */
+    text-align: center;
+    background-color: #fff;
+    border: 1px solid #ccc;
+    border-radius: 20px;
 }
