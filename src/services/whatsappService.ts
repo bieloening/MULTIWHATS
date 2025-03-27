@@ -92,7 +92,7 @@ class ServicoWhatsApp {
         }
     }
 
-    async enviarAudio(idConexao: string, numero: string, filePath: string, sendAsVoice: boolean = false): Promise<void> {
+    async enviarArquivo(idConexao: string, numero: string, filePath: string): Promise<void> {
         const cliente = this.obterConexao(idConexao);
         if (!cliente) {
             console.error(`Nenhuma conexão encontrada para a conta: ${idConexao}`);
@@ -100,17 +100,31 @@ class ServicoWhatsApp {
         }
 
         try {
-            console.log(`Enviando áudio para ${numero} na conexão ${idConexao}...`);
-
-            // Cria uma instância de MessageMedia a partir do arquivo
+            console.log(`Enviando arquivo para ${numero} na conexão ${idConexao}...`);
             const media = MessageMedia.fromFilePath(filePath);
-
-            // Envia o áudio como mensagem de voz (PTT) se `sendAsVoice` for true
-            await cliente.sendMessage(`${numero}@c.us`, media, { sendAudioAsVoice: sendAsVoice });
-            console.log(`Áudio enviado com sucesso para ${numero}`);
+            await cliente.sendMessage(`${numero}@c.us`, media);
+            console.log(`Arquivo enviado com sucesso para ${numero}`);
         } catch (error) {
-            console.error('Erro ao enviar áudio:', error);
-            throw new Error('Erro ao enviar áudio.');
+            console.error('Erro ao enviar arquivo:', error);
+            throw new Error('Erro ao enviar arquivo.');
+        }
+    }
+
+    async enviarMensagemDeVoz(idConexao: string, numero: string, filePath: string): Promise<void> {
+        const cliente = this.obterConexao(idConexao);
+        if (!cliente) {
+            console.error(`Nenhuma conexão encontrada para a conta: ${idConexao}`);
+            throw new Error('Conexão não encontrada.');
+        }
+
+        try {
+            console.log(`Enviando mensagem de voz para ${numero} na conexão ${idConexao}...`);
+            const media = MessageMedia.fromFilePath(filePath);
+            await cliente.sendMessage(`${numero}@c.us`, media, { sendAudioAsVoice: true });
+            console.log(`Mensagem de voz enviada com sucesso para ${numero}`);
+        } catch (error) {
+            console.error('Erro ao enviar mensagem de voz:', error);
+            throw new Error('Erro ao enviar mensagem de voz.');
         }
     }
 

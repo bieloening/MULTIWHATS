@@ -9,6 +9,7 @@ import { rimraf } from 'rimraf'; // Atualize a importação para a versão mais 
 import mysql from 'mysql2/promise';
 import { v4 as uuidv4 } from 'uuid'; // Adicionar importação para gerar UUIDs
 import ControladorIndex from './controllers/index'; // Importa o controlador
+import { definirRotas } from './routes/index';
 
 const app = express();
 const httpServer = createServer(app);
@@ -19,6 +20,9 @@ const controladorIndex = new ControladorIndex(); // Instancia o controlador
 const PORTA = process.env.PORT || 3000;
 
 app.use(express.json()); // Middleware para parsing de JSON
+
+// Define as rotas
+definirRotas(app);
 
 // Configuração do MySQL
 const configuracaoBanco = {
@@ -526,9 +530,6 @@ app.post('/api/mensagens', async (req, res) => {
         res.status(404).json({ message: 'Conexão não encontrada' });
     }
 });
-
-// Adiciona o endpoint para enviar áudio
-app.post('/api/enviar-audio', controladorIndex.enviarAudio.bind(controladorIndex));
 
 // Servir arquivos de mídia
 app.use('/media', express.static(path.join(__dirname, 'media')));

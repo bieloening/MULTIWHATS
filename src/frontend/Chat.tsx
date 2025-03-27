@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { io } from "socket.io-client";
+import WaveSurfer from "wavesurfer.js";
 import "./Chat.css"; // Importar o arquivo CSS
 
 const socket = io("http://localhost:3000");
@@ -30,12 +31,43 @@ const Chat: React.FC = () => {
     useState<Conversa | null>(null);
   const [novaMensagem, setNovaMensagem] = useState<string>("");
   const [isRecording, setIsRecording] = useState(false);
-  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(
-    null
-  );
+  const mediaRecorder = useRef<MediaRecorder | null>(null); // Ref para MediaRecorder
   const [audioChunks, setAudioChunks] = useState<Blob[]>([]);
   const [recordingTime, setRecordingTime] = useState<number>(0); // Tempo de gravação em segundos
   const recordingInterval = useRef<NodeJS.Timeout | null>(null); // Referência para o intervalo de gravação
+  const audioBlob = useRef<Blob | null>(null);
+  const waveSurferRef = useRef<WaveSurfer | null>(null);
+  const audioUrl = useRef<string | null>(null);
+  const waveformContainerRef = useRef<HTMLDivElement | null>(null); // Ref para o contêiner do WaveSurfer
+  const isMounted = useRef(true); // Flag para verificar se o componente está montado
+
+  useEffect(() => {
+    isMounted.current = true;
+
+    // Inicializa o WaveSurfer somente após o contêiner estar disponível
+    if (waveformContainerRef.current) {
+      waveSurferRef.current = WaveSurfer.create({
+        container: waveformContainerRef.current,
+        waveColor: "#ddd",
+        progressColor: "#4caf50",
+        cursorColor: "#4caf50",
+        height: 50,
+      });
+    }
+
+    return () => {
+      isMounted.current = false;
+
+      // Limpa o WaveSurfer ao desmontar o componente
+      waveSurferRef.current?.destroy();
+      waveSurferRef.current = null;
+
+      // Limpa o intervalo de gravação
+      if (recordingInterval.current) {
+        clearInterval(recordingInterval.current);
+      }
+    };
+  }, []);
 
   const normalizarNumero = (numero: string): string => {
     return numero.replace("@c.us", ""); // Remove o sufixo @c.us para padronizar
@@ -287,52 +319,6 @@ const Chat: React.FC = () => {
     }
   };
 
-  const enviarAudio = async (audioFile: File) => {
-    if (!conversaSelecionada) {
-        console.error("Erro: Nenhuma conversa selecionada.");
-        return;
-    }
-
-    const formData = new FormData();
-    formData.append("file", audioFile);
-    formData.append("idConexao", localStorage.getItem("idConexao") || "");
-    formData.append("numero", conversaSelecionada.number);
-
-    try {
-        console.log("Enviando áudio para o endpoint '/api/enviar-audio'...");
-        console.log("Dados enviados:", {
-            idConexao: localStorage.getItem("idConexao"),
-            numero: conversaSelecionada.number,
-            fileName: audioFile.name,
-        });
-
-        const response = await axios.post("http://localhost:3000/api/enviar-audio", formData, {
-            headers: { "Content-Type": "multipart/form-data" },
-        });
-
-        if (response.status === 200) {
-            console.log("Áudio enviado com sucesso!");
-        } else {
-            console.error("Erro ao enviar áudio: Resposta inesperada da API", response.data);
-        }
-    } catch (error) {
-        if (axios.isAxiosError(error)) {
-            console.error("Erro ao enviar áudio (Axios):", error.message);
-            console.error("Detalhes da resposta:", error.response?.data);
-        } else if (error instanceof Error) {
-            console.error("Erro ao enviar áudio:", error.message);
-        } else {
-            console.error("Erro desconhecido ao enviar áudio:", error);
-        }
-    }
-};
-
-  const handleAudioUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files?.length) {
-      enviarAudio(event.target.files[0]);
-    }
-  };
-
   const iniciarGravacao = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -340,39 +326,35 @@ const Chat: React.FC = () => {
 
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
-          setAudioChunks((prevChunks) => [...prevChunks, event.data]);
+          audioBlob.current = event.data;
+          const url = URL.createObjectURL(event.data);
+          audioUrl.current = url;
+          waveSurferRef.current?.load(url);
         }
       };
 
       recorder.onstop = () => {
-        const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
-        const audioFile = new File([audioBlob], "audio.webm", {
-          type: "audio/webm",
-        });
-        enviarAudio(audioFile); // Envia o áudio gravado
-        setAudioChunks([]); // Limpa os chunks após o envio
-        setRecordingTime(0); // Reseta o tempo de gravação
+        setRecordingTime(0);
         if (recordingInterval.current) {
-          clearInterval(recordingInterval.current); // Limpa o intervalo
+          clearInterval(recordingInterval.current);
         }
       };
 
       recorder.start();
-      setMediaRecorder(recorder);
+      mediaRecorder.current = recorder; // Armazena o MediaRecorder na ref
       setIsRecording(true);
 
-      // Inicia o contador de tempo
       recordingInterval.current = setInterval(() => {
-        setRecordingTime((prevTime) => prevTime + 1);
+        setRecordingTime((prev) => prev + 1);
       }, 1000);
     } catch (error) {
-      console.error("Erro ao iniciar gravação de áudio:", error);
+      console.error("Erro ao iniciar gravação:", error);
     }
   };
 
   const pararGravacao = () => {
-    if (mediaRecorder) {
-      mediaRecorder.stop();
+    if (mediaRecorder.current) { // Verifica se mediaRecorder não é null
+      mediaRecorder.current.stop();
       setIsRecording(false);
     }
   };
@@ -384,6 +366,30 @@ const Chat: React.FC = () => {
       iniciarGravacao();
     }
   };
+
+  const enviarAudio = async () => {
+    if (!audioBlob.current || !conversaSelecionada) return;
+
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+        const audioBase64 = reader.result?.toString().split(',')[1]; // Extrai o Base64
+        if (!audioBase64) return;
+
+        try {
+            await axios.post("http://localhost:3000/api/enviar-mensagem-voz", {
+                idConexao: localStorage.getItem("idConexao"),
+                numero: conversaSelecionada.number,
+                audioBase64,
+            });
+            console.log("Mensagem de voz enviada com sucesso!");
+            audioBlob.current = null;
+        } catch (error) {
+            console.error("Erro ao enviar mensagem de voz:", error);
+        }
+    };
+
+    reader.readAsDataURL(audioBlob.current);
+};
 
   const formatarTempo = (tempo: number): string => {
     const minutos = Math.floor(tempo / 60);
@@ -520,6 +526,8 @@ const Chat: React.FC = () => {
               ))}
             </div>
 
+            <div id="waveform" ref={waveformContainerRef}></div>
+
             {/* Input para envio de mensagens */}
             <div className="input-container">
               {isRecording ? (
@@ -541,25 +549,11 @@ const Chat: React.FC = () => {
                 style={{ display: "none" }}
                 onChange={enviarArquivo}
               />
-              <input
-                type="file"
-                id="audio-input"
-                accept="audio/*"
-                style={{ display: "none" }}
-                onChange={handleAudioUpload}
-              />
               <button onClick={gravarAudio}>
-                <i
-                  className={`fas ${isRecording ? "fa-stop" : "fa-microphone"}`}
-                ></i>
+                <i className={`fas ${isRecording ? "fa-times" : "fa-microphone"}`}></i>
               </button>
-              <button
-                onClick={() => document.getElementById("file-input")?.click()}
-              >
-                <i className="fas fa-paperclip"></i>
-              </button>
-              <button onClick={enviarMensagem} disabled={isRecording}>
-                Enviar
+              <button onClick={enviarAudio}>
+                <i className="fas fa-paper-plane"></i>
               </button>
             </div>
           </>
