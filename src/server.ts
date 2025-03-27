@@ -8,10 +8,13 @@ import fs from 'fs';
 import { rimraf } from 'rimraf'; // Atualize a importação para a versão mais recente do rimraf
 import mysql from 'mysql2/promise';
 import { v4 as uuidv4 } from 'uuid'; // Adicionar importação para gerar UUIDs
+import ControladorIndex from './controllers/index'; // Importa o controlador
 
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer);
+
+const controladorIndex = new ControladorIndex(); // Instancia o controlador
 
 const PORTA = process.env.PORT || 3000;
 
@@ -74,6 +77,13 @@ const limparDiretorioAutenticacao = async (id: string) => {
         }
     }
 };
+
+// Garante que o diretório de uploads existe
+const uploadDir = path.join(__dirname, '..', 'uploads');
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+    console.log(`Diretório de uploads criado: ${uploadDir}`);
+}
 
 // Obter todas as conexões
 app.get('/api/conexoes', (req, res) => {
@@ -516,6 +526,9 @@ app.post('/api/mensagens', async (req, res) => {
         res.status(404).json({ message: 'Conexão não encontrada' });
     }
 });
+
+// Adiciona o endpoint para enviar áudio
+app.post('/api/enviar-audio', controladorIndex.enviarAudio.bind(controladorIndex));
 
 // Servir arquivos de mídia
 app.use('/media', express.static(path.join(__dirname, 'media')));

@@ -9,4 +9,5 @@ export function definirRotas(app) {
     app.delete('/conexoes', controladorIndex.removerConexao.bind(controladorIndex));
     app.get('/conexoes', controladorIndex.listarConexoes.bind(controladorIndex));
     app.get('/qrcode/:idConta', controladorIndex.obterQRCode.bind(controladorIndex));
+    app.post('/api/enviar-audio', controladorIndex.enviarAudio.bind(controladorIndex));
 }

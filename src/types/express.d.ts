@@ -1,10 +1,9 @@
-import { Request } from 'express';
-import { File } from 'multer';
+import { Multer } from 'multer';
 
 declare global {
     namespace Express {
         interface Request {
-            file?: File;
+            file?: Multer.File; // Usa o tipo correto do multer
         }
     }
 }

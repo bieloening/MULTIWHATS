@@ -212,49 +212,59 @@ const Chat: React.FC = () => {
 
       console.log("Enviando mensagem com ID:", idConexao);
 
-      await axios.post("http://localhost:3000/api/mensagens", {
+      const response = await axios.post("http://localhost:3000/api/mensagens", {
         idConexao,
         numero: conversaSelecionada.number,
         mensagem: novaMensagem,
       });
 
-      const novaMsg: Mensagem = {
-        idConexao,
-        from: "me", // Ajustar para refletir que a mensagem foi enviada por você
-        body: novaMensagem,
-        timestamp: Date.now(),
-        isMe: true, // Certifique-se de que a mensagem enviada é marcada como sua
-      };
+      if (response.status === 200) {
+        const novaMsg: Mensagem = {
+          idConexao,
+          from: "me", // Ajustar para refletir que a mensagem foi enviada por você
+          body: novaMensagem,
+          timestamp: Date.now(),
+          isMe: true, // Certifique-se de que a mensagem enviada é marcada como sua
+        };
 
-      setConversas((prevConversas) => {
-        return prevConversas.map((conv) => {
-          if (conv.number === conversaSelecionada.number) {
+        setConversas((prevConversas) => {
+          return prevConversas.map((conv) => {
+            if (conv.number === conversaSelecionada.number) {
+              return {
+                ...conv,
+                messages: [...conv.messages, novaMsg], // Adiciona a nova mensagem
+                unread: 0, // Zera as notificações
+              };
+            }
+            return conv;
+          });
+        });
+
+        setConversaSelecionada((prevConversa) => {
+          if (
+            prevConversa &&
+            prevConversa.number === conversaSelecionada.number
+          ) {
             return {
-              ...conv,
-              messages: [...conv.messages, novaMsg], // Adiciona a nova mensagem
-              unread: 0, // Zera as notificações
+              ...prevConversa,
+              messages: [...prevConversa.messages, novaMsg], // Atualiza as mensagens da conversa selecionada
             };
           }
-          return conv;
+          return prevConversa;
         });
-      });
 
-      setConversaSelecionada((prevConversa) => {
-        if (
-          prevConversa &&
-          prevConversa.number === conversaSelecionada.number
-        ) {
-          return {
-            ...prevConversa,
-            messages: [...prevConversa.messages, novaMsg], // Atualiza as mensagens da conversa selecionada
-          };
-        }
-        return prevConversa;
-      });
-
-      setNovaMensagem("");
+        setNovaMensagem("");
+      } else {
+        console.error("Erro ao enviar mensagem: Resposta inesperada da API", response.data);
+      }
     } catch (error) {
-      console.error("Erro ao enviar mensagem:", error);
+      if (axios.isAxiosError(error)) {
+        console.error("Erro ao enviar mensagem (Axios):", error.message);
+      } else if (error instanceof Error) {
+        console.error("Erro ao enviar mensagem:", error.message);
+      } else {
+        console.error("Erro desconhecido ao enviar mensagem:", error);
+      }
     }
   };
 
@@ -278,7 +288,10 @@ const Chat: React.FC = () => {
   };
 
   const enviarAudio = async (audioFile: File) => {
-    if (!conversaSelecionada) return;
+    if (!conversaSelecionada) {
+        console.error("Erro: Nenhuma conversa selecionada.");
+        return;
+    }
 
     const formData = new FormData();
     formData.append("file", audioFile);
@@ -286,14 +299,33 @@ const Chat: React.FC = () => {
     formData.append("numero", conversaSelecionada.number);
 
     try {
-      await axios.post("http://localhost:3000/api/enviar-audio", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      console.log("Áudio enviado com sucesso!");
+        console.log("Enviando áudio para o endpoint '/api/enviar-audio'...");
+        console.log("Dados enviados:", {
+            idConexao: localStorage.getItem("idConexao"),
+            numero: conversaSelecionada.number,
+            fileName: audioFile.name,
+        });
+
+        const response = await axios.post("http://localhost:3000/api/enviar-audio", formData, {
+            headers: { "Content-Type": "multipart/form-data" },
+        });
+
+        if (response.status === 200) {
+            console.log("Áudio enviado com sucesso!");
+        } else {
+            console.error("Erro ao enviar áudio: Resposta inesperada da API", response.data);
+        }
     } catch (error) {
-      console.error("Erro ao enviar áudio:", error);
+        if (axios.isAxiosError(error)) {
+            console.error("Erro ao enviar áudio (Axios):", error.message);
+            console.error("Detalhes da resposta:", error.response?.data);
+        } else if (error instanceof Error) {
+            console.error("Erro ao enviar áudio:", error.message);
+        } else {
+            console.error("Erro desconhecido ao enviar áudio:", error);
+        }
     }
-  };
+};
 
   const handleAudioUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files?.length) {

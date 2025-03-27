@@ -1,4 +1,4 @@
-import { Client, LocalAuth } from 'whatsapp-web.js';
+import { Client, LocalAuth, MessageMedia } from 'whatsapp-web.js';
 import QRCode from 'qrcode';
 
 class ServicoWhatsApp {
@@ -89,6 +89,28 @@ class ServicoWhatsApp {
             }
         } else {
             console.log(`Nenhuma conexão encontrada para a conta: ${idConta}`);
+        }
+    }
+
+    async enviarAudio(idConexao: string, numero: string, filePath: string, sendAsVoice: boolean = false): Promise<void> {
+        const cliente = this.obterConexao(idConexao);
+        if (!cliente) {
+            console.error(`Nenhuma conexão encontrada para a conta: ${idConexao}`);
+            throw new Error('Conexão não encontrada.');
+        }
+
+        try {
+            console.log(`Enviando áudio para ${numero} na conexão ${idConexao}...`);
+
+            // Cria uma instância de MessageMedia a partir do arquivo
+            const media = MessageMedia.fromFilePath(filePath);
+
+            // Envia o áudio como mensagem de voz (PTT) se `sendAsVoice` for true
+            await cliente.sendMessage(`${numero}@c.us`, media, { sendAudioAsVoice: sendAsVoice });
+            console.log(`Áudio enviado com sucesso para ${numero}`);
+        } catch (error) {
+            console.error('Erro ao enviar áudio:', error);
+            throw new Error('Erro ao enviar áudio.');
         }
     }
 

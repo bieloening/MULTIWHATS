@@ -10,11 +10,14 @@
     "dev": "ts-node-dev src/app.ts"
   },
   "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@fortawesome/fontawesome-free": "^6.7.2",
     "@fortawesome/react-fontawesome": "^0.2.2",
     "axios": "^1.8.2",
     "copy-webpack-plugin": "^13.0.0",
     "express": "^4.17.1",
+    "ffmpeg": "^0.0.4",
+    "ffmpeg-static": "^5.2.0",
     "html-webpack-plugin": "^5.6.3",
     "multer": "^1.4.5-lts.2",
     "mysql2": "^2.3.3",
