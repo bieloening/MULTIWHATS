@@ -368,27 +368,32 @@ const Chat: React.FC = () => {
   };
 
   const enviarAudio = async () => {
-    if (!audioBlob.current || !conversaSelecionada) return;
+    if (!audioBlob.current || !conversaSelecionada) {
+        console.error("Erro: Nenhum áudio gravado ou conversa selecionada.");
+        return;
+    }
 
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-        const audioBase64 = reader.result?.toString().split(',')[1]; // Extrai o Base64
-        if (!audioBase64) return;
+    try {
+        console.log("Enviando mensagem de voz...");
 
-        try {
-            await axios.post("http://localhost:3000/api/enviar-mensagem-voz", {
-                idConexao: localStorage.getItem("idConexao"),
-                numero: conversaSelecionada.number,
-                audioBase64,
-            });
+        const formData = new FormData();
+        formData.append("idConexao", localStorage.getItem("idConexao") || "");
+        formData.append("numero", conversaSelecionada.number);
+        formData.append("audio", audioBlob.current); // Envia o áudio como Blob
+
+        const response = await axios.post("http://localhost:3000/api/enviar-mensagem-voz", formData, {
+            headers: { "Content-Type": "multipart/form-data" },
+        });
+
+        if (response.status === 200) {
             console.log("Mensagem de voz enviada com sucesso!");
             audioBlob.current = null;
-        } catch (error) {
-            console.error("Erro ao enviar mensagem de voz:", error);
+        } else {
+            console.error("Erro ao enviar mensagem de voz: Resposta inesperada da API", response.data);
         }
-    };
-
-    reader.readAsDataURL(audioBlob.current);
+    } catch (error) {
+        console.error("Erro ao enviar mensagem de voz:", error);
+    }
 };
 
   const formatarTempo = (tempo: number): string => {

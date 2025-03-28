@@ -5,9 +5,9 @@ export function definirRotas(app) {
 
     app.get('/mensagens', controladorIndex.obterMensagens.bind(controladorIndex));
     app.post('/mensagens', controladorIndex.enviarMensagem.bind(controladorIndex));
+    app.post('/mensagens', controladorIndex.enviarMensagemDeVoz.bind(controladorIndex));
     app.post('/conexoes', controladorIndex.adicionarConexao.bind(controladorIndex));
     app.delete('/conexoes', controladorIndex.removerConexao.bind(controladorIndex));
     app.get('/conexoes', controladorIndex.listarConexoes.bind(controladorIndex));
     app.get('/qrcode/:idConta', controladorIndex.obterQRCode.bind(controladorIndex));
-    app.post('/api/enviar-mensagem-voz', controladorIndex.enviarMensagemDeVoz.bind(controladorIndex)); // Rota para mensagens de voz
 }

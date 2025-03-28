@@ -2,40 +2,74 @@ import ServicoWhatsApp from '../services/whatsappService';
 import { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
+import multer from 'multer';
 
 class ControladorIndex {
     private servicoWhatsApp: ServicoWhatsApp;
+
+    // Configuração do multer para processar FormData
+    private upload = multer({ storage: multer.memoryStorage() });
 
     constructor() {
         this.servicoWhatsApp = new ServicoWhatsApp();
     }
 
     async enviarMensagemDeVoz(req: Request, res: Response) {
-        const { idConexao, numero, audioBase64 } = req.body;
+        this.upload.single('audio')(req, res, async (err) => {
+            if (err) {
+                console.error('Erro ao processar o áudio:', err);
+                return res.status(400).json({ error: 'Erro ao processar o áudio.' });
+            }
 
-        if (!idConexao || !numero || !audioBase64) {
-            return res.status(400).json({ error: 'ID da conexão, número e áudio são obrigatórios.' });
-        }
+            const { idConexao, numero } = req.body;
+            const audioBuffer = req.file?.buffer;
 
-        try {
-            // Salvar o áudio temporariamente no servidor
-            const audioBuffer = Buffer.from(audioBase64, 'base64');
-            const filePath = path.join(__dirname, '../../temp', `${Date.now()}-audio.ogg`);
-            fs.writeFileSync(filePath, audioBuffer);
+            if (!idConexao || !numero || !audioBuffer) {
+                console.error('Erro: ID da conexão, número ou áudio não fornecido.');
+                return res.status(400).json({ error: 'ID da conexão, número e áudio são obrigatórios.' });
+            }
 
-            console.log(`Áudio salvo temporariamente em: ${filePath}`);
+            let filePath: string | undefined;
 
-            // Enviar o áudio como mensagem de voz
-            await this.servicoWhatsApp.enviarMensagemDeVoz(idConexao, numero, filePath);
+            try {
+                console.log('Recebendo mensagem de voz...');
+                console.log(`ID da conexão: ${idConexao}, Número: ${numero}`);
 
-            // Remover o arquivo temporário
-            fs.unlinkSync(filePath);
+                // Diretório temporário
+                const tempDir = path.join(__dirname, '../../temp');
 
-            res.status(200).json({ message: 'Mensagem de voz enviada com sucesso.' });
-        } catch (error) {
-            console.error('Erro ao enviar mensagem de voz:', error);
-            res.status(500).json({ error: 'Erro ao enviar mensagem de voz.' });
-        }
+                // Verifica se o diretório existe, caso contrário, cria-o
+                if (!fs.existsSync(tempDir)) {
+                    fs.mkdirSync(tempDir, { recursive: true });
+                    console.log(`Diretório temporário criado: ${tempDir}`);
+                }
+
+                // Salvar o áudio temporariamente no servidor
+                filePath = path.join(tempDir, `${Date.now()}-audio.ogg`);
+                fs.writeFileSync(filePath, audioBuffer);
+
+                console.log(`Áudio salvo temporariamente em: ${filePath}`);
+
+                // Enviar o áudio como mensagem de voz
+                await this.servicoWhatsApp.enviarMensagemDeVoz(`${numero.replace(/\D/g, '')}@c.us`, filePath);
+
+                // Remover o arquivo temporário
+                fs.unlinkSync(filePath);
+                console.log(`Arquivo temporário removido: ${filePath}`);
+
+                res.status(200).json({ message: 'Mensagem de voz enviada com sucesso.' });
+            } catch (error) {
+                console.error('Erro ao enviar mensagem de voz:', error);
+
+                // Remova o arquivo temporário em caso de erro
+                if (filePath && fs.existsSync(filePath)) {
+                    fs.unlinkSync(filePath);
+                    console.log(`Arquivo temporário removido após erro: ${filePath}`);
+                }
+
+                res.status(500).json({ error: 'Erro ao enviar mensagem de voz.' });
+            }
+        });
     }
 
     async obterMensagens(req: Request, res: Response) {

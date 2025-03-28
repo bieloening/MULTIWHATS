@@ -15,11 +15,13 @@ const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer);
 
+// Middleware para parsing de JSON com limite aumentado
+app.use(express.json({ limit: '50mb' })); // Aumenta o limite para 50 MB
+app.use(express.urlencoded({ limit: '50mb', extended: true })); // Aumenta o limite para dados codificados em URL
+
 const controladorIndex = new ControladorIndex(); // Instancia o controlador
 
 const PORTA = process.env.PORT || 3000;
-
-app.use(express.json()); // Middleware para parsing de JSON
 
 // Define as rotas
 definirRotas(app);

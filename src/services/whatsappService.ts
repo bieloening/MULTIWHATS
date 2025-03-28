@@ -48,6 +48,7 @@ class ServicoWhatsApp {
 
         cliente.on('ready', () => {
             console.log(`Cliente ${idConta} está pronto!`);
+            this.adicionarConexao(idConta, cliente); // Garante que a conexão seja registrada
         });
 
         cliente.on('authenticated', () => {
@@ -64,7 +65,6 @@ class ServicoWhatsApp {
         });
 
         cliente.initialize();
-        this.adicionarConexao(idConta, cliente);
     }
 
     desconectar(idConta: string): void {
@@ -110,15 +110,15 @@ class ServicoWhatsApp {
         }
     }
 
-    async enviarMensagemDeVoz(idConexao: string, numero: string, filePath: string): Promise<void> {
-        const cliente = this.obterConexao(idConexao);
+    async enviarMensagemDeVoz(numero: string, filePath: string): Promise<void> {
+        const cliente = this.obterConexao(numero);
         if (!cliente) {
-            console.error(`Nenhuma conexão encontrada para a conta: ${idConexao}`);
+            console.error(`Nenhuma conexão encontrada para a conta: ${numero}`);
             throw new Error('Conexão não encontrada.');
         }
 
         try {
-            console.log(`Enviando mensagem de voz para ${numero} na conexão ${idConexao}...`);
+            console.log(`Enviando mensagem de voz para ${numero} na conexão ${numero}...`);
             const media = MessageMedia.fromFilePath(filePath);
             await cliente.sendMessage(`${numero}@c.us`, media, { sendAudioAsVoice: true });
             console.log(`Mensagem de voz enviada com sucesso para ${numero}`);
