@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import { Server } from 'socket.io';
 import { createServer } from 'http';
-import { Client, LocalAuth } from 'whatsapp-web.js';
+import { Client, LocalAuth, MessageMedia } from 'whatsapp-web.js';
 import qrcode from 'qrcode';
 import fs from 'fs';
 import { rimraf } from 'rimraf'; // Atualize a importação para a versão mais recente do rimraf
@@ -10,6 +10,22 @@ import mysql from 'mysql2/promise';
 import { v4 as uuidv4 } from 'uuid'; // Adicionar importação para gerar UUIDs
 import ControladorIndex from './controllers/index'; // Importa o controlador
 import { definirRotas } from './routes/index';
+import winston from 'winston';
+
+// Configuração do logger
+const logger = winston.createLogger({
+    level: process.env.NODE_ENV === 'production' ? 'warn' : 'debug',
+    format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.printf(({ timestamp, level, message }) => {
+            return `${timestamp} [${level.toUpperCase()}]: ${message}`;
+        })
+    ),
+    transports: [
+        new winston.transports.Console(),
+        new winston.transports.File({ filename: 'logs/server.log' })
+    ]
+});
 
 const app = express();
 const httpServer = createServer(app);
@@ -58,7 +74,7 @@ inicializarBanco().catch(console.error);
 app.use(express.static(path.join(__dirname, '..', 'dist')));
 
 // Define explicitamente que conexoes é um array de strings
-const conexoes: { id: string, status: string }[] = [];
+const conexoes: { id: string, status: string }[] = []; // Conexões mantidas apenas em memória
 const clientes: { [key: string]: Client } = {};
 const qrCodes: { [key: string]: string } = {};
 const mensagensProcessadas: Set<string> = new Set(); // Adicione um conjunto para rastrear mensagens processadas
@@ -77,9 +93,9 @@ const limparDiretorioAutenticacao = async (id: string) => {
     if (fs.existsSync(diretorioAutenticacao)) {
         try {
             await rimraf(diretorioAutenticacao); // Use a versão assíncrona do rimraf
-            console.log(`Diretório de autenticação removido: ${diretorioAutenticacao}`);
+            logger.info(`Diretório de autenticação removido: ${diretorioAutenticacao}`);
         } catch (error) {
-            console.error(`Erro ao limpar o diretório de autenticação: ${error}`);
+            logger.error(`Erro ao limpar o diretório de autenticação: ${error}`);
         }
     }
 };
@@ -88,19 +104,19 @@ const limparDiretorioAutenticacao = async (id: string) => {
 const uploadDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
-    console.log(`Diretório de uploads criado: ${uploadDir}`);
+    logger.info(`Diretório de uploads criado: ${uploadDir}`);
 }
 
 // Obter todas as conexões
 app.get('/api/conexoes', (req, res) => {
-    console.log('GET /api/conexoes', { conexoes });
+    logger.debug('GET /api/conexoes', { conexoes });
     res.json(conexoes);
 });
 
 // Adicionar uma nova conexão
-app.post('/api/conexoes', (req, res) => {
+app.post('/api/conexoes', async (req, res) => {
     const id = uuidv4(); // Gerar um ID único
-    console.log('POST /api/conexoes', { id });
+    logger.info('POST /api/conexoes', { id });
 
     if (!conexoes.some(conexao => conexao.id === id)) {
         conexoes.push({ id, status: 'inativo' });
@@ -117,7 +133,7 @@ app.post('/api/conexoes', (req, res) => {
 // Ativar uma conexão
 app.post('/api/ativar', (req, res) => {
     const { id }: { id: string } = req.body;
-    console.log('POST /api/ativar', id);
+    logger.info('POST /api/ativar', id);
 
     const conexao = conexoes.find(conexao => conexao.id === id);
     if (conexao) {
@@ -132,10 +148,10 @@ app.post('/api/ativar', (req, res) => {
         clientes[id] = cliente;
 
         cliente.on('qr', (qr) => {
-            console.log('QR RECEIVED', qr);
+            logger.info('QR RECEIVED', qr);
             qrcode.toDataURL(qr, (err, url) => {
                 if (err) {
-                    console.error('Erro ao gerar QR Code:', err);
+                    logger.error('Erro ao gerar QR Code:', err);
                 } else {
                     qrCodes[id] = url;
                     io.emit('qrCodeUpdated', { id, qrCode: url });
@@ -144,32 +160,25 @@ app.post('/api/ativar', (req, res) => {
         });
 
         cliente.on('ready', () => {
-            console.log('Client is ready!');
+            logger.info(`Cliente ${id} está pronto!`);
             conexao.status = 'ativo';
             io.emit('statusUpdated', { id, status: 'ativo' });
+            logger.info('Conexões ativas no momento:', conexoes.map(c => ({ id: c.id, status: c.status })));
         });
 
         cliente.on('disconnected', async (reason) => {
-            console.log('Client is disconnected!', reason);
+            logger.info('Client is disconnected!', reason);
             conexao.status = 'inativo';
             io.emit('statusUpdated', { id, status: 'inativo' });
             try {
                 await cliente.logout();
             } catch (e) {
-                if (e instanceof Error) {
-                    console.error('Erro ao deslogar:', e.message);
-                } else {
-                    console.error('Erro desconhecido ao deslogar:', e);
-                }
+                logger.error('Erro ao deslogar:', e);
             } finally {
                 try {
                     await cliente.destroy();
                 } catch (e) {
-                    if (e instanceof Error) {
-                        console.error('Erro ao destruir cliente:', e.message);
-                    } else {
-                        console.error('Erro desconhecido ao destruir cliente:', e);
-                    }
+                    logger.error('Erro ao destruir cliente:', e);
                 }
                 delete clientes[id];
             }
@@ -178,12 +187,12 @@ app.post('/api/ativar', (req, res) => {
         // Armazenar mensagens recebidas no banco de dados
         cliente.on('message', async (msg) => {
             if (msg.from === 'status@broadcast') {
-                console.log('Mensagem ignorada: status@broadcast');
+                logger.info('Mensagem ignorada: status@broadcast');
                 return; // Ignorar mensagens de broadcast
             }
 
             if (!mensagensProcessadas.has(msg.id._serialized)) {
-                console.log('MESSAGE RECEIVED', msg);
+                logger.info('MESSAGE RECEIVED', msg);
 
                 const isMe = msg.from === cliente.info.wid._serialized;
 
@@ -198,7 +207,7 @@ app.post('/api/ativar', (req, res) => {
                             mediaUrl = `/media/${msg.id._serialized}.${media.mimetype.split('/')[1]}`;
                         }
                     } catch (error) {
-                        console.error('Erro ao baixar mídia:', error);
+                        logger.error('Erro ao baixar mídia:', error);
                     }
                 }
 
@@ -231,7 +240,8 @@ app.post('/api/ativar', (req, res) => {
 
                     conexao.release();
                 } catch (error) {
-                    console.error('Erro ao salvar mensagem no banco de dados:', error);
+                    const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+                    logger.error('Erro ao salvar mensagem no banco de dados:', errorMessage);
                 }
             }
         });
@@ -247,7 +257,7 @@ app.post('/api/ativar', (req, res) => {
 // Desativar uma conexão
 app.post('/api/desativar', async (req, res) => {
     const { id }: { id: string } = req.body;
-    console.log('POST /api/desativar', id);
+    logger.info('POST /api/desativar', id);
 
     const conexao = conexoes.find(conexao => conexao.id === id);
     if (conexao) {
@@ -255,20 +265,12 @@ app.post('/api/desativar', async (req, res) => {
             try {
                 await clientes[id].logout();
             } catch (e) {
-                if (e instanceof Error) {
-                    console.error('Erro ao deslogar:', e.message);
-                } else {
-                    console.error('Erro desconhecido ao deslogar:', e);
-                }
+                logger.error('Erro ao deslogar:', e);
             } finally {
                 try {
                     await clientes[id].destroy();
                 } catch (e) {
-                    if (e instanceof Error) {
-                        console.error('Erro ao destruir cliente:', e.message);
-                    } else {
-                        console.error('Erro desconhecido ao destruir cliente:', e);
-                    }
+                    logger.error('Erro ao destruir cliente:', e);
                 }
                 delete clientes[id];
             }
@@ -288,7 +290,7 @@ app.post('/api/desativar', async (req, res) => {
 // Obter QR Code de uma conexão existente
 app.get('/api/qrcode/:id', (req, res) => {
     const { id }: { id: string } = req.params;
-    console.log('GET /api/qrcode/:id', id);
+    logger.info('GET /api/qrcode/:id', id);
 
     if (conexoes.some(conexao => conexao.id === id)) {
         if (qrCodes[id]) {
@@ -304,7 +306,7 @@ app.get('/api/qrcode/:id', (req, res) => {
 // Obter detalhes de uma conexão específica
 app.get('/api/conexoes/:id', (req, res) => {
     const { id } = req.params;
-    console.log('GET /api/conexoes/:id', id);
+    logger.info('GET /api/conexoes/:id', id);
 
     const conexao = conexoes.find(conexao => conexao.id === id);
     if (conexao) {
@@ -327,33 +329,33 @@ const validarNumero = (numero: string): string | null => {
 // Obter nome do contato
 app.get('/api/nome-contato/:numero', async (req, res) => {
     const { numero } = req.params;
-    console.log('GET /api/nome-contato/:numero', numero);
+    logger.info('GET /api/nome-contato/:numero', numero);
 
     const numeroValidado = validarNumero(numero);
     if (!numeroValidado) {
-        console.error('Erro: Número inválido.');
+        logger.error('Erro: Número inválido.');
         return res.status(400).json({ message: 'Número inválido.' });
     }
 
     const cliente = clientes[Object.keys(clientes)[0]]; // Usar o primeiro cliente disponível
     if (!cliente) {
-        console.error('Erro: Nenhum cliente ativo encontrado.');
+        logger.error('Erro: Nenhum cliente ativo encontrado.');
         return res.status(404).json({ message: 'Nenhum cliente ativo encontrado.' });
     }
 
     try {
         const contato = await cliente.getContactById(numeroValidado);
         if (!contato) {
-            console.error(`Erro: Contato não encontrado para o número ${numeroValidado}.`);
+            logger.error(`Erro: Contato não encontrado para o número ${numeroValidado}.`);
             return res.status(404).json({ message: 'Contato não encontrado.' });
         }
 
         res.json({ name: contato.pushname || contato.name || numero });
     } catch (error) {
         if (error instanceof Error) {
-            console.error('Erro ao obter nome do contato:', error.message);
+            logger.error('Erro ao obter nome do contato:', error.message);
         } else {
-            console.error('Erro desconhecido ao obter nome do contato:', error);
+            logger.error('Erro desconhecido ao obter nome do contato:', error);
         }
         res.status(500).json({ message: 'Erro ao obter nome do contato.' });
     }
@@ -362,33 +364,33 @@ app.get('/api/nome-contato/:numero', async (req, res) => {
 // Obter foto de perfil do contato
 app.get('/api/foto-perfil/:numero', async (req, res) => {
     const { numero } = req.params;
-    console.log('GET /api/foto-perfil/:numero', numero);
+    logger.info('GET /api/foto-perfil/:numero', numero);
 
     const numeroValidado = validarNumero(numero);
     if (!numeroValidado) {
-        console.error('Erro: Número inválido.');
+        logger.error('Erro: Número inválido.');
         return res.status(400).json({ message: 'Número inválido.' });
     }
 
     const cliente = clientes[Object.keys(clientes)[0]]; // Usar o primeiro cliente disponível
     if (!cliente) {
-        console.error('Erro: Nenhum cliente ativo encontrado.');
+        logger.error('Erro: Nenhum cliente ativo encontrado.');
         return res.status(404).json({ message: 'Nenhum cliente ativo encontrado.' });
     }
 
     try {
         const urlFotoPerfil = await cliente.getProfilePicUrl(numeroValidado);
         if (!urlFotoPerfil) {
-            console.error(`Erro: Foto de perfil não encontrada para o número ${numeroValidado}.`);
+            logger.error(`Erro: Foto de perfil não encontrada para o número ${numeroValidado}.`);
             return res.status(404).json({ message: 'Foto de perfil não encontrada.' });
         }
 
         res.json({ profilePicUrl: urlFotoPerfil });
     } catch (error) {
         if (error instanceof Error) {
-            console.error('Erro ao obter foto de perfil:', error.message);
+            logger.error('Erro ao obter foto de perfil:', error.message);
         } else {
-            console.error('Erro desconhecido ao obter foto de perfil:', error);
+            logger.error('Erro desconhecido ao obter foto de perfil:', error);
         }
         res.status(500).json({ message: 'Erro ao obter foto de perfil.' });
     }
@@ -397,7 +399,7 @@ app.get('/api/foto-perfil/:numero', async (req, res) => {
 // Ajustar a consulta SQL para recuperar mensagens enviadas e recebidas
 app.get('/api/historico-conversas/:id', async (req, res) => {
     const { id } = req.params;
-    console.log('GET /api/historico-conversas/:id', id);
+    logger.info('GET /api/historico-conversas/:id', id);
 
     try {
         const conexao = await pool.getConnection();
@@ -436,22 +438,19 @@ app.get('/api/historico-conversas/:id', async (req, res) => {
 
         res.json(Object.values(conversas));
     } catch (error) {
-        if (error instanceof Error) {
-            console.error('Erro ao obter histórico de conversas:', error.message);
-        } else {
-            console.error('Erro desconhecido ao obter histórico de conversas:', error);
-        }
-        res.status(500).json({ message: 'Erro ao obter histórico de conversas' });
+        const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+        logger.error('Erro ao obter histórico de conversas:', errorMessage);
+        res.status(500).json({ message: 'Erro ao obter histórico de conversas', details: errorMessage });
     }
 });
 
 // Remover uma conexão
 app.delete('/api/conexoes', async (req, res) => {
     const { id }: { id: string } = req.body;
-    console.log('DELETE /api/conexoes', id);
+    logger.info('DELETE /api/conexoes', id);
 
     if (!id) {
-        console.error('Erro: ID da conta não fornecido.');
+        logger.error('Erro: ID da conta não fornecido.');
         return res.status(400).json({ message: 'ID da conta é obrigatório.' });
     }
 
@@ -462,20 +461,12 @@ app.delete('/api/conexoes', async (req, res) => {
             try {
                 await clientes[id].logout();
             } catch (e) {
-                if (e instanceof Error) {
-                    console.error('Erro ao deslogar:', e.message);
-                } else {
-                    console.error('Erro desconhecido ao deslogar:', e);
-                }
+                logger.error('Erro ao deslogar:', e);
             } finally {
                 try {
                     await clientes[id].destroy();
                 } catch (e) {
-                    if (e instanceof Error) {
-                        console.error('Erro ao destruir cliente:', e.message);
-                    } else {
-                        console.error('Erro desconhecido ao destruir cliente:', e);
-                    }
+                    logger.error('Erro ao destruir cliente:', e);
                 }
                 delete clientes[id];
             }
@@ -485,51 +476,80 @@ app.delete('/api/conexoes', async (req, res) => {
         // Limpa o diretório de autenticação
         await limparDiretorioAutenticacao(id);
 
-        console.log('Conexão removida com sucesso:', id);
+        logger.info('Conexão removida com sucesso:', id);
         res.status(200).json({ message: 'Conexão removida com sucesso' });
     } else {
-        console.error('Erro: Conexão não encontrada.');
+        logger.error('Erro: Conexão não encontrada.');
         res.status(404).json({ message: 'Conexão não encontrada.' });
     }
 });
 
 // Enviar mensagem
-app.post('/api/mensagens', async (req, res) => {
-    const { idConexao, numero, mensagem }: { idConexao: string, numero: string, mensagem: string } = req.body;
-    console.log('POST /api/mensagens', { idConexao, numero, mensagem });
+app.post('/api/mensagens', controladorIndex.upload, async (req, res) => {
+    const { idConexao, numero, mensagem, tipo }: { idConexao: string, numero: string, mensagem?: string, tipo?: string } = req.body;
+    const arquivo = req.file; // Arquivo opcional (mídia ou áudio)
+    logger.info('POST /api/mensagens', { idConexao, numero, mensagem, tipo });
 
-    if (!idConexao) { // Verificar se o ID da conexão é válido
-        console.error('Erro: ID inválido para conexão.', { idConexao });
-        return res.status(400).json({ message: 'ID inválido para conexão.' });
+    if (!idConexao || !numero || (!mensagem && !arquivo)) {
+        logger.error('Erro: ID da conexão, número e mensagem ou arquivo são obrigatórios.', { idConexao, numero });
+        return res.status(400).json({ message: 'ID da conexão, número e mensagem ou arquivo são obrigatórios.' });
     }
 
     const cliente = clientes[idConexao];
-    if (cliente) {
-        try {
-            const numeroFormatado = numero.includes('@c.us') ? numero : `${numero}@c.us`;
-            console.log(`Enviando mensagem para ${numeroFormatado} usando ID: ${idConexao}`);
-            await cliente.sendMessage(numeroFormatado, mensagem);
+    if (!cliente) {
+        logger.error('Erro: Conexão não encontrada.', { idConexao });
+        return res.status(404).json({ message: 'Conexão não encontrada' });
+    }
 
-            const conexao = await pool.getConnection();
-            const mensagemId = uuidv4(); // Gerar um ID único para a mensagem
-            await conexao.execute(
-                'INSERT INTO mensagens (id, origem, destino, corpo, timestamp) VALUES (?, ?, ?, ?, ?)',
-                [mensagemId, idConexao, numeroFormatado, mensagem, Date.now()]
-            );
-            conexao.release();
+    try {
+        const numeroFormatado = numero.includes('@c.us') ? numero : `${numero}@c.us`;
 
-            res.status(200).json({ message: 'Mensagem enviada com sucesso' });
-        } catch (error) {
-            if (error instanceof Error) {
-                console.error('Erro ao enviar mensagem:', error.message);
-            } else {
-                console.error('Erro desconhecido ao enviar mensagem:', error);
+        if (tipo === 'voz' && arquivo) {
+            logger.info(`Enviando mensagem de voz para ${numeroFormatado} usando ID: ${idConexao}`);
+            const tempDir = path.join(__dirname, 'temp');
+
+            if (!fs.existsSync(tempDir)) {
+                fs.mkdirSync(tempDir, { recursive: true });
+                logger.info(`Diretório temporário criado: ${tempDir}`);
             }
-            res.status(500).json({ message: 'Erro ao enviar mensagem' });
+
+            const filePath = path.join(tempDir, `${Date.now()}-audio.ogg`);
+            fs.writeFileSync(filePath, arquivo.buffer);
+
+            await cliente.sendMessage(numeroFormatado, MessageMedia.fromFilePath(filePath), { sendAudioAsVoice: true });
+
+            fs.unlinkSync(filePath); // Limpar arquivo temporário
+            logger.info(`Mensagem de voz enviada e arquivo removido: ${filePath}`);
+        } else if (arquivo) {
+            logger.info(`Enviando mídia para ${numeroFormatado} usando ID: ${idConexao}`);
+            const filePath = path.join(__dirname, 'uploads', arquivo.originalname);
+            fs.writeFileSync(filePath, arquivo.buffer);
+
+            await cliente.sendMessage(numeroFormatado, MessageMedia.fromFilePath(filePath));
+
+            fs.unlinkSync(filePath); // Limpar arquivo temporário
+            logger.info(`Mídia enviada e arquivo removido: ${filePath}`);
+        } else if (mensagem) {
+            logger.info(`Enviando mensagem de texto para ${numeroFormatado} usando ID: ${idConexao}`);
+            await cliente.sendMessage(numeroFormatado, mensagem);
+        } else {
+            return res.status(400).json({ message: 'Nenhuma mensagem ou arquivo fornecido.' });
         }
-    } else {
-        console.error('Erro: Conexão não encontrada.', { idConexao });
-        res.status(404).json({ message: 'Conexão não encontrada' });
+
+        // Salvar a mensagem no banco de dados
+        const conexao = await pool.getConnection();
+        const mensagemId = uuidv4();
+        await conexao.execute(
+            'INSERT INTO mensagens (id, origem, destino, corpo, timestamp) VALUES (?, ?, ?, ?, ?)',
+            [mensagemId, idConexao, numeroFormatado, mensagem || 'Arquivo enviado', Date.now()]
+        );
+        conexao.release();
+
+        res.status(200).json({ message: 'Mensagem enviada com sucesso' });
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+        logger.error('Erro ao enviar mensagem:', errorMessage);
+        res.status(500).json({ message: 'Erro ao enviar mensagem', details: errorMessage });
     }
 });
 
@@ -543,5 +563,5 @@ app.get('*', (req, res) => {
 
 // Inicializa o servidor
 httpServer.listen(PORTA, () => {
-    console.log(`Servidor rodando na porta ${PORTA}`);
+    logger.info(`Servidor rodando na porta ${PORTA}`);
 });

@@ -1,92 +1,57 @@
 import ServicoWhatsApp from '../services/whatsappService';
 import { Request, Response } from 'express';
-import fs from 'fs';
-import path from 'path';
-import multer from 'multer';
+import multer, { Multer } from 'multer';
 
 class ControladorIndex {
     private servicoWhatsApp: ServicoWhatsApp;
-
-    // Configuração do multer para processar FormData
-    private upload = multer({ storage: multer.memoryStorage() });
+    private uploadMiddleware: Multer;
 
     constructor() {
         this.servicoWhatsApp = new ServicoWhatsApp();
+        this.uploadMiddleware = multer({ storage: multer.memoryStorage() });
     }
 
-    async enviarMensagemDeVoz(req: Request, res: Response) {
-        this.upload.single('audio')(req, res, async (err) => {
-            if (err) {
-                console.error('Erro ao processar o áudio:', err);
-                return res.status(400).json({ error: 'Erro ao processar o áudio.' });
+    public get upload() {
+        return this.uploadMiddleware.single('arquivo');
+    }
+
+    async enviarMensagemOuMidia(req: Request, res: Response) {
+        const { idConexao, numero, mensagem, tipo } = req.body;
+        const arquivo = req.file;
+
+        if (!idConexao || !numero || (!mensagem && !arquivo)) {
+            return res.status(400).json({ error: 'ID da conexão, número e mensagem ou arquivo são obrigatórios.' });
+        }
+
+        try {
+            if (tipo === 'voz' && arquivo) {
+                console.log('Enviando mensagem de voz...');
+                await this.servicoWhatsApp.enviarMensagemDeVoz(idConexao, numero, arquivo.buffer);
+            } else if (arquivo) {
+                console.log('Enviando mídia...');
+                await this.servicoWhatsApp.enviarArquivo(idConexao, numero, arquivo.buffer);
+            } else if (mensagem) {
+                console.log('Enviando mensagem de texto...');
+                await this.servicoWhatsApp.enviarMensagem(idConexao, numero, mensagem);
+            } else {
+                return res.status(400).json({ error: 'Nenhuma mensagem ou arquivo fornecido.' });
             }
 
-            const { idConexao, numero } = req.body;
-            const audioBuffer = req.file?.buffer;
-
-            if (!idConexao || !numero || !audioBuffer) {
-                console.error('Erro: ID da conexão, número ou áudio não fornecido.');
-                return res.status(400).json({ error: 'ID da conexão, número e áudio são obrigatórios.' });
-            }
-
-            let filePath: string | undefined;
-
-            try {
-                console.log('Recebendo mensagem de voz...');
-                console.log(`ID da conexão: ${idConexao}, Número: ${numero}`);
-
-                // Diretório temporário
-                const tempDir = path.join(__dirname, '../../temp');
-
-                // Verifica se o diretório existe, caso contrário, cria-o
-                if (!fs.existsSync(tempDir)) {
-                    fs.mkdirSync(tempDir, { recursive: true });
-                    console.log(`Diretório temporário criado: ${tempDir}`);
-                }
-
-                // Salvar o áudio temporariamente no servidor
-                filePath = path.join(tempDir, `${Date.now()}-audio.ogg`);
-                fs.writeFileSync(filePath, audioBuffer);
-
-                console.log(`Áudio salvo temporariamente em: ${filePath}`);
-
-                // Enviar o áudio como mensagem de voz
-                await this.servicoWhatsApp.enviarMensagemDeVoz(`${numero.replace(/\D/g, '')}@c.us`, filePath);
-
-                // Remover o arquivo temporário
-                fs.unlinkSync(filePath);
-                console.log(`Arquivo temporário removido: ${filePath}`);
-
-                res.status(200).json({ message: 'Mensagem de voz enviada com sucesso.' });
-            } catch (error) {
-                console.error('Erro ao enviar mensagem de voz:', error);
-
-                // Remova o arquivo temporário em caso de erro
-                if (filePath && fs.existsSync(filePath)) {
-                    fs.unlinkSync(filePath);
-                    console.log(`Arquivo temporário removido após erro: ${filePath}`);
-                }
-
-                res.status(500).json({ error: 'Erro ao enviar mensagem de voz.' });
-            }
-        });
+            res.status(200).json({ message: 'Mensagem enviada com sucesso.' });
+        } catch (error) {
+            console.error('Erro ao enviar mensagem ou mídia:', error);
+            const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+            res.status(500).json({ error: 'Erro ao enviar mensagem ou mídia.', details: errorMessage });
+        }
     }
 
     async obterMensagens(req: Request, res: Response) {
-        // Lógica para recuperar mensagens do atendimento ao cliente
-        res.send("Recuperar mensagens");
-    }
-
-    async enviarMensagem(req: Request, res: Response) {
-        const { idConta, para, mensagem } = req.body;
-        if (!idConta || !para || !mensagem) {
-            return res.status(400).json({ error: 'ID da conta, destinatário e mensagem são obrigatórios' });
-        }
         try {
-            await this.servicoWhatsApp.enviarMensagem(idConta, para, mensagem);
-            res.send(`Mensagem enviada de ${idConta} para ${para}`);
+            const mensagens = await this.servicoWhatsApp.obterMensagens(); // Corrigido para chamar o método
+            res.status(200).json(mensagens);
         } catch (error) {
-            res.status(500).json({ error: 'Erro ao enviar mensagem' });
+            console.error('Erro ao obter mensagens:', error);
+            res.status(500).json({ error: 'Erro ao obter mensagens.' });
         }
     }
 
@@ -95,8 +60,13 @@ class ControladorIndex {
         if (!idConta) {
             return res.status(400).json({ error: 'ID da conta é obrigatório' });
         }
-        this.servicoWhatsApp.conectar(idConta);
-        res.send(`Conexão ${idConta} adicionada`);
+        try {
+            await this.servicoWhatsApp.conectar(idConta);
+            res.status(200).json({ message: `Conexão ${idConta} adicionada com sucesso.` });
+        } catch (error) {
+            console.error('Erro ao adicionar conexão:', error);
+            res.status(500).json({ error: 'Erro ao adicionar conexão.' });
+        }
     }
 
     async removerConexao(req: Request, res: Response) {
@@ -104,24 +74,43 @@ class ControladorIndex {
         if (!idConta) {
             return res.status(400).json({ error: 'ID da conta é obrigatório' });
         }
-        this.servicoWhatsApp.desconectar(idConta);
-        res.send(`Conexão ${idConta} removida`);
+        try {
+            await this.servicoWhatsApp.desconectar(idConta);
+            res.status(200).json({ message: `Conexão ${idConta} removida com sucesso.` });
+        } catch (error) {
+            console.error('Erro ao remover conexão:', error);
+            res.status(500).json({ error: 'Erro ao remover conexão.' });
+        }
     }
 
     async listarConexoes(req: Request, res: Response) {
-        const conexoes: string[] = this.servicoWhatsApp.listarConexoes();
-        res.json(conexoes);
+        try {
+            const conexoes = await this.servicoWhatsApp.listarConexoes();
+            console.log('Conexões ativas no momento:', conexoes);
+            res.status(200).json(conexoes);
+        } catch (error) {
+            console.error('Erro ao listar conexões:', error);
+            res.status(500).json({ error: 'Erro ao listar conexões.' });
+        }
     }
 
     async obterQRCode(req: Request, res: Response) {
         const { idConta } = req.params;
-        const qrCode = this.servicoWhatsApp.obterQRCode(idConta);
-        if (qrCode) {
-            console.log(`QR Code encontrado para ${idConta}`);
-            res.send(`<img src="${qrCode}" alt="QR Code para ${idConta}">`);
-        } else {
-            console.log(`QR Code não encontrado para ${idConta}`);
-            res.status(404).send('QR Code não encontrado');
+        if (!idConta) {
+            return res.status(400).json({ error: 'ID da conta é obrigatório.' });
+        }
+        try {
+            const qrCode = await this.servicoWhatsApp.obterQRCode(idConta);
+            if (qrCode) {
+                console.log(`QR Code encontrado para ${idConta}`);
+                res.status(200).send(`<img src="${qrCode}" alt="QR Code para ${idConta}">`);
+            } else {
+                console.log(`QR Code não encontrado para ${idConta}`);
+                res.status(404).json({ error: 'QR Code não encontrado.' });
+            }
+        } catch (error) {
+            console.error('Erro ao obter QR Code:', error);
+            res.status(500).json({ error: 'Erro ao obter QR Code.' });
         }
     }
 }

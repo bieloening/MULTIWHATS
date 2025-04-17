@@ -1,33 +1,48 @@
 import { Client, LocalAuth, MessageMedia } from 'whatsapp-web.js';
 import QRCode from 'qrcode';
+import path from 'path';
+import fs from 'fs';
 
 class ServicoWhatsApp {
     private conexoes: Map<string, Client>;
     private qrCodes: Map<string, string>;
+    private mensagensRecebidas: { idConta: string, mensagens: { from: string, body: string, mediaUrl?: string }[] }[];
 
     constructor() {
         this.conexoes = new Map();
         this.qrCodes = new Map();
+        this.mensagensRecebidas = [];
     }
 
     adicionarConexao(id: string, cliente: Client) {
+        console.log(`Adicionando conexão: ${id}`);
         this.conexoes.set(id, cliente);
+        console.log('Conexões registradas atualmente:', Array.from(this.conexoes.keys()));
     }
 
     removerConexao(id: string) {
+        console.log(`Removendo conexão: ${id}`);
         const cliente = this.conexoes.get(id);
         if (cliente) {
             cliente.destroy();
         }
         this.conexoes.delete(id);
+        console.log('Conexões restantes após remoção:', Array.from(this.conexoes.keys()));
     }
 
     obterConexao(id: string): Client | undefined {
         return this.conexoes.get(id);
     }
 
-    listarConexoes(): string[] {
-        return Array.from(this.conexoes.keys());
+    listarConexoes(): { id: string, status: string }[] {
+        return Array.from(this.conexoes.entries()).map(([id, cliente]) => ({
+            id,
+            status: cliente.info ? 'ativo' : 'inativo',
+        }));
+    }
+
+    async obterMensagens(): Promise<{ idConta: string, mensagens: { from: string, body: string, mediaUrl?: string }[] }[]> {
+        return this.mensagensRecebidas;
     }
 
     conectar(idConta: string): void {
@@ -49,6 +64,7 @@ class ServicoWhatsApp {
         cliente.on('ready', () => {
             console.log(`Cliente ${idConta} está pronto!`);
             this.adicionarConexao(idConta, cliente); // Garante que a conexão seja registrada
+            console.log('Conexões registradas:', Array.from(this.conexoes.keys()));
         });
 
         cliente.on('authenticated', () => {
@@ -62,6 +78,42 @@ class ServicoWhatsApp {
         cliente.on('disconnected', (motivo) => {
             console.log(`Cliente ${idConta} desconectado:`, motivo);
             this.removerConexao(idConta);
+        });
+
+        cliente.on('message', async (msg) => {
+            console.log(`Mensagem recebida de ${msg.from}: ${msg.body}`);
+            let mediaUrl: string | null = null;
+
+            if (msg.hasMedia) {
+                try {
+                    const media = await msg.downloadMedia();
+                    if (media && media.data) {
+                        if (media.mimetype && media.mimetype.includes('/')) {
+                            const filePath = path.join(__dirname, 'media', `${msg.id._serialized}.${media.mimetype.split('/')[1]}`);
+                            fs.writeFileSync(filePath, media.data, 'base64');
+                            mediaUrl = `/media/${msg.id._serialized}.${media.mimetype.split('/')[1]}`;
+                        } else {
+                            console.error('Erro: Mimetype inválido ou ausente.');
+                        }
+                    } else {
+                        console.error('Erro: Mídia retornada está vazia ou indefinida.');
+                    }
+                } catch (error) {
+                    console.error('Erro ao baixar mídia:', error);
+                }
+            }
+
+            const contaMensagens = this.mensagensRecebidas.find(m => m.idConta === idConta);
+            if (contaMensagens) {
+                contaMensagens.mensagens.push({ from: msg.from, body: msg.body, mediaUrl: mediaUrl || undefined });
+            } else {
+                this.mensagensRecebidas.push({
+                    idConta,
+                    mensagens: [{ from: msg.from, body: msg.body, mediaUrl: mediaUrl || undefined }]
+                });
+            }
+
+            console.log(`URL da mídia: ${mediaUrl}`);
         });
 
         cliente.initialize();
@@ -92,39 +144,56 @@ class ServicoWhatsApp {
         }
     }
 
-    async enviarArquivo(idConexao: string, numero: string, filePath: string): Promise<void> {
-        const cliente = this.obterConexao(idConexao);
+    async enviarMensagemDeVoz(idConta: string, numero: string, buffer: Buffer): Promise<void> {
+        const cliente = this.obterConexao(idConta);
         if (!cliente) {
-            console.error(`Nenhuma conexão encontrada para a conta: ${idConexao}`);
             throw new Error('Conexão não encontrada.');
         }
 
-        try {
-            console.log(`Enviando arquivo para ${numero} na conexão ${idConexao}...`);
-            const media = MessageMedia.fromFilePath(filePath);
-            await cliente.sendMessage(`${numero}@c.us`, media);
-            console.log(`Arquivo enviado com sucesso para ${numero}`);
-        } catch (error) {
-            console.error('Erro ao enviar arquivo:', error);
-            throw new Error('Erro ao enviar arquivo.');
-        }
-    }
-
-    async enviarMensagemDeVoz(numero: string, filePath: string): Promise<void> {
-        const cliente = this.obterConexao(numero);
-        if (!cliente) {
-            console.error(`Nenhuma conexão encontrada para a conta: ${numero}`);
-            throw new Error('Conexão não encontrada.');
+        const tempDir = path.join(__dirname, '../../temp');
+        if (!fs.existsSync(tempDir)) {
+            fs.mkdirSync(tempDir, { recursive: true });
         }
 
+        const filePath = path.join(tempDir, `${Date.now()}-audio.ogg`);
         try {
-            console.log(`Enviando mensagem de voz para ${numero} na conexão ${numero}...`);
+            fs.writeFileSync(filePath, buffer);
+
             const media = MessageMedia.fromFilePath(filePath);
             await cliente.sendMessage(`${numero}@c.us`, media, { sendAudioAsVoice: true });
             console.log(`Mensagem de voz enviada com sucesso para ${numero}`);
         } catch (error) {
             console.error('Erro ao enviar mensagem de voz:', error);
             throw new Error('Erro ao enviar mensagem de voz.');
+        } finally {
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+                console.log(`Arquivo temporário removido: ${filePath}`);
+            }
+        }
+    }
+
+    async enviarArquivo(idConta: string, numero: string, buffer: Buffer): Promise<void> {
+        const cliente = this.obterConexao(idConta);
+        if (!cliente) {
+            throw new Error('Conexão não encontrada.');
+        }
+
+        const uploadDir = path.join(__dirname, '../../uploads');
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+
+        const filePath = path.join(uploadDir, `${Date.now()}-file`);
+        fs.writeFileSync(filePath, buffer);
+
+        try {
+            const media = MessageMedia.fromFilePath(filePath);
+            await cliente.sendMessage(`${numero}@c.us`, media);
+            console.log(`Arquivo enviado com sucesso para ${numero}`);
+        } finally {
+            fs.unlinkSync(filePath);
+            console.log(`Arquivo de upload removido: ${filePath}`);
         }
     }
 

@@ -12,6 +12,7 @@ interface Mensagem {
   body: string;
   timestamp: number;
   isMe?: boolean; // Adicionado campo isMe
+  mediaUrl?: string; // Adicionado campo mediaUrl para mensagens de áudio
 }
 
 interface Conversa {
@@ -40,6 +41,7 @@ const Chat: React.FC = () => {
   const audioUrl = useRef<string | null>(null);
   const waveformContainerRef = useRef<HTMLDivElement | null>(null); // Ref para o contêiner do WaveSurfer
   const isMounted = useRef(true); // Flag para verificar se o componente está montado
+  const [audioDuration, setAudioDuration] = useState<number>(0); // Duração do áudio em segundos
 
   useEffect(() => {
     isMounted.current = true;
@@ -330,6 +332,12 @@ const Chat: React.FC = () => {
           const url = URL.createObjectURL(event.data);
           audioUrl.current = url;
           waveSurferRef.current?.load(url);
+
+          // Calcular a duração do áudio
+          const audio = new Audio(url);
+          audio.onloadedmetadata = () => {
+            setAudioDuration(Math.ceil(audio.duration));
+          };
         }
       };
 
@@ -338,6 +346,7 @@ const Chat: React.FC = () => {
         if (recordingInterval.current) {
           clearInterval(recordingInterval.current);
         }
+        setIsRecording(false);
       };
 
       recorder.start();
@@ -353,10 +362,18 @@ const Chat: React.FC = () => {
   };
 
   const pararGravacao = () => {
-    if (mediaRecorder.current) { // Verifica se mediaRecorder não é null
+    if (mediaRecorder.current) {
       mediaRecorder.current.stop();
-      setIsRecording(false);
     }
+  };
+
+  const cancelarGravacao = () => {
+    if (mediaRecorder.current) {
+      mediaRecorder.current.stop();
+    }
+    audioBlob.current = null; // Limpa o áudio gravado
+    setIsRecording(false);
+    setRecordingTime(0);
   };
 
   const gravarAudio = () => {
@@ -374,14 +391,20 @@ const Chat: React.FC = () => {
     }
 
     try {
+        const idConta = localStorage.getItem("idConexao");
+        if (!idConta) {
+            console.error("Erro: ID da conta não encontrado no localStorage.");
+            return;
+        }
+
         console.log("Enviando mensagem de voz...");
-
         const formData = new FormData();
-        formData.append("idConexao", localStorage.getItem("idConexao") || "");
+        formData.append("idConexao", idConta); // Certifique-se de usar o mesmo nome configurado no backend
         formData.append("numero", conversaSelecionada.number);
-        formData.append("audio", audioBlob.current); // Envia o áudio como Blob
+        formData.append("tipo", "voz"); // Adicione o tipo para diferenciar mensagens de voz
+        formData.append("arquivo", audioBlob.current); // O nome 'arquivo' deve corresponder ao configurado no multer
 
-        const response = await axios.post("http://localhost:3000/api/enviar-mensagem-voz", formData, {
+        const response = await axios.post("http://localhost:3000/api/mensagens", formData, {
             headers: { "Content-Type": "multipart/form-data" },
         });
 
@@ -394,7 +417,7 @@ const Chat: React.FC = () => {
     } catch (error) {
         console.error("Erro ao enviar mensagem de voz:", error);
     }
-};
+  };
 
   const formatarTempo = (tempo: number): string => {
     const minutos = Math.floor(tempo / 60);
@@ -432,9 +455,21 @@ const Chat: React.FC = () => {
     buscarConexoesAtivas(); // Atualizar conexões ativas ao carregar o componente
   }, []);
 
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setNovaMensagem(e.target.value);
+  };
+
   const handleKeyPress = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Enter") {
+    if (event.key === "Enter" && novaMensagem.trim() !== "") {
       enviarMensagem();
+    }
+  };
+
+  const handleSendButtonClick = () => {
+    if (novaMensagem.trim() !== "") {
+      enviarMensagem();
+    } else {
+      gravarAudio();
     }
   };
 
@@ -448,6 +483,15 @@ const Chat: React.FC = () => {
         return conv;
       });
     });
+  };
+
+  const reproduzirAudio = (audioUrl: string | undefined) => {
+    if (!audioUrl) {
+        console.error('Erro: URL de áudio não definida.');
+        return;
+    }
+    const audio = new Audio(audioUrl);
+    audio.play().catch((error) => console.error('Erro ao reproduzir áudio:', error));
   };
 
   return (
@@ -523,7 +567,11 @@ const Chat: React.FC = () => {
                   key={`${mensagem.idConexao}-${index}`}
                   className={`message ${mensagem.isMe ? "sent" : "received"}`}
                 >
-                  <span className="message-body">{mensagem.body}</span>
+                  {mensagem.mediaUrl ? (
+                    <button onClick={() => reproduzirAudio(mensagem.mediaUrl)}>Reproduzir Áudio</button>
+                  ) : (
+                    <span className="message-body">{mensagem.body}</span>
+                  )}
                   <span className="timestamp">
                     {new Date(mensagem.timestamp).toLocaleTimeString()}
                   </span>
@@ -536,30 +584,31 @@ const Chat: React.FC = () => {
             {/* Input para envio de mensagens */}
             <div className="input-container">
               {isRecording ? (
-                <div className="recording-timer">
-                  Gravando: {formatarTempo(recordingTime)}
+                <div className="recording-controls">
+                  <div className="recording-timer">
+                    Gravando: {formatarTempo(recordingTime)}
+                  </div>
+                  <button onClick={enviarAudio} className="send-audio-button">
+                    <i className="fas fa-paper-plane"></i> Enviar
+                  </button>
+                  <button onClick={cancelarGravacao} className="cancel-audio-button">
+                    <i className="fas fa-times"></i> Cancelar
+                  </button>
                 </div>
               ) : (
-                <input
-                  type="text"
-                  value={novaMensagem}
-                  onChange={(e) => setNovaMensagem(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  placeholder="Digite sua mensagem..."
-                />
+                <>
+                  <input
+                    type="text"
+                    value={novaMensagem}
+                    onChange={handleInputChange}
+                    onKeyPress={handleKeyPress}
+                    placeholder="Digite sua mensagem..."
+                  />
+                  <button onClick={gravarAudio}>
+                    <i className={`fas ${isRecording ? "fa-stop" : "fa-microphone"}`}></i>
+                  </button>
+                </>
               )}
-              <input
-                type="file"
-                id="file-input"
-                style={{ display: "none" }}
-                onChange={enviarArquivo}
-              />
-              <button onClick={gravarAudio}>
-                <i className={`fas ${isRecording ? "fa-times" : "fa-microphone"}`}></i>
-              </button>
-              <button onClick={enviarAudio}>
-                <i className="fas fa-paper-plane"></i>
-              </button>
             </div>
           </>
         ) : (

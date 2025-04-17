@@ -152,51 +152,53 @@
     display: flex;
     align-items: center;
     padding: 10px;
-    background-color: #fff;
-    border-top: 1px solid #ccc;
+    border-top: 1px solid #ddd;
+    background-color: #f9f9f9;
 }
 
-input {
+.input-container input {
     flex: 1;
     padding: 10px;
-    border: 1px solid #ccc;
+    border: 1px solid #ddd;
     border-radius: 20px;
-    margin-right: 10px;
+    outline: none;
+    font-size: 16px;
 }
 
-button {
-    padding: 10px 20px;
-    background-color: #075e54;
+.input-container button {
+    margin-left: 10px;
+    background-color: #4caf50;
     color: white;
     border: none;
-    border-radius: 20px;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     cursor: pointer;
-}
-
-button:hover {
-    background-color: #064e48;
+    outline: none;
 }
 
 .input-container button i {
     font-size: 18px;
+}
+
+.input-container button:hover {
+    background-color: #45a049;
+}
+
+button.audio-play {
+    background-color: #4caf50;
     color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 5px 10px;
+    cursor: pointer;
 }
 
-.input-container button svg {
-    font-size: 18px;
-    color: white;
-}
-
-.input-container button {
-    margin-left: 5px;
-}
-
-.input-container button i.fa-times {
-    color: #d32f2f; /* Vermelho para o botão de cancelar */
-}
-
-.input-container button i.fa-paper-plane {
-    color: #075e54; /* Verde para o botão de enviar */
+button.audio-play:hover {
+    background-color: #45a049;
 }
 
 .inactive-message {
@@ -250,6 +252,48 @@ button:hover {
     background-color: #fff;
     border: 1px solid #ccc;
     border-radius: 20px;
+}
+
+.recording-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.recording-timer {
+    font-size: 16px;
+    font-weight: bold;
+    color: #4caf50;
+}
+
+.send-audio-button,
+.cancel-audio-button {
+    padding: 10px 15px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.send-audio-button {
+    background-color: #4caf50;
+    color: white;
+}
+
+.send-audio-button:hover {
+    background-color: #45a049;
+}
+
+.cancel-audio-button {
+    background-color: #f44336;
+    color: white;
+}
+
+.cancel-audio-button:hover {
+    background-color: #e53935;
 }
 
 #waveform {
