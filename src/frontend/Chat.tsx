@@ -404,7 +404,7 @@ const Chat: React.FC = () => {
         formData.append("tipo", "voz"); // Adicione o tipo para diferenciar mensagens de voz
         formData.append("arquivo", audioBlob.current); // O nome 'arquivo' deve corresponder ao configurado no multer
 
-        const response = await axios.post("http://localhost:3000/api/mensagens", formData, {
+        const response = await axios.post("http://localhost:3000/api/mensagens/voz", formData, {
             headers: { "Content-Type": "multipart/form-data" },
         });
 
@@ -462,14 +462,6 @@ const Chat: React.FC = () => {
   const handleKeyPress = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter" && novaMensagem.trim() !== "") {
       enviarMensagem();
-    }
-  };
-
-  const handleSendButtonClick = () => {
-    if (novaMensagem.trim() !== "") {
-      enviarMensagem();
-    } else {
-      gravarAudio();
     }
   };
 
@@ -589,10 +581,10 @@ const Chat: React.FC = () => {
                     Gravando: {formatarTempo(recordingTime)}
                   </div>
                   <button onClick={enviarAudio} className="send-audio-button">
-                    <i className="fas fa-paper-plane"></i> Enviar
+                    <i className="fas fa-paper-plane"></i>
                   </button>
                   <button onClick={cancelarGravacao} className="cancel-audio-button">
-                    <i className="fas fa-times"></i> Cancelar
+                    <i className="fas fa-times"></i>
                   </button>
                 </div>
               ) : (

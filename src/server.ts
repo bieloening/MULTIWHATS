@@ -11,6 +11,7 @@ import { v4 as uuidv4 } from 'uuid'; // Adicionar importação para gerar UUIDs
 import ControladorIndex from './controllers/index'; // Importa o controlador
 import { definirRotas } from './routes/index';
 import winston from 'winston';
+import Joi from 'joi';
 
 // Configuração do logger
 const logger = winston.createLogger({
@@ -113,21 +114,32 @@ app.get('/api/conexoes', (req, res) => {
     res.json(conexoes);
 });
 
+// Validação para a rota /api/conexoes
+const conexoesSchema = Joi.object({
+  nome: Joi.string().required(),
+  numero: Joi.string().pattern(/^\d+$/).required(), // Apenas números
+});
+
 // Adicionar uma nova conexão
 app.post('/api/conexoes', async (req, res) => {
-    const id = uuidv4(); // Gerar um ID único
-    logger.info('POST /api/conexoes', { id });
+  const { error } = conexoesSchema.validate(req.body);
+  if (error) {
+    return res.status(400).json({ error: error.details[0].message });
+  }
 
-    if (!conexoes.some(conexao => conexao.id === id)) {
-        conexoes.push({ id, status: 'inativo' });
+  const id = uuidv4(); // Gerar um ID único
+  logger.info('POST /api/conexoes', { id });
 
-        // Garante que o diretório de autenticação exista
-        garantirDiretorioAutenticacao(id);
+  if (!conexoes.some(conexao => conexao.id === id)) {
+      conexoes.push({ id, status: 'inativo' });
 
-        res.status(201).json({ message: 'Conexão adicionada com sucesso', id }); // Retorna o ID gerado
-    } else {
-        res.status(400).json({ message: 'ID da conexão já existente' });
-    }
+      // Garante que o diretório de autenticação exista
+      garantirDiretorioAutenticacao(id);
+
+      res.status(201).json({ message: 'Conexão adicionada com sucesso', id }); // Retorna o ID gerado
+  } else {
+      res.status(400).json({ message: 'ID da conexão já existente' });
+  }
 });
 
 // Ativar uma conexão
@@ -484,15 +496,13 @@ app.delete('/api/conexoes', async (req, res) => {
     }
 });
 
-// Enviar mensagem
-app.post('/api/mensagens', controladorIndex.upload, async (req, res) => {
-    const { idConexao, numero, mensagem, tipo }: { idConexao: string, numero: string, mensagem?: string, tipo?: string } = req.body;
-    const arquivo = req.file; // Arquivo opcional (mídia ou áudio)
-    logger.info('POST /api/mensagens', { idConexao, numero, mensagem, tipo });
+// Enviar mensagem de texto
+app.post('/api/mensagens', async (req, res) => {
+    const { idConexao, numero, mensagem }: { idConexao: string, numero: string, mensagem: string } = req.body;
 
-    if (!idConexao || !numero || (!mensagem && !arquivo)) {
-        logger.error('Erro: ID da conexão, número e mensagem ou arquivo são obrigatórios.', { idConexao, numero });
-        return res.status(400).json({ message: 'ID da conexão, número e mensagem ou arquivo são obrigatórios.' });
+    if (!idConexao || !numero || !mensagem) {
+        logger.error('Erro: ID da conexão, número e mensagem são obrigatórios.', { idConexao, numero });
+        return res.status(400).json({ message: 'ID da conexão, número e mensagem são obrigatórios.' });
     }
 
     const cliente = clientes[idConexao];
@@ -503,53 +513,53 @@ app.post('/api/mensagens', controladorIndex.upload, async (req, res) => {
 
     try {
         const numeroFormatado = numero.includes('@c.us') ? numero : `${numero}@c.us`;
-
-        if (tipo === 'voz' && arquivo) {
-            logger.info(`Enviando mensagem de voz para ${numeroFormatado} usando ID: ${idConexao}`);
-            const tempDir = path.join(__dirname, 'temp');
-
-            if (!fs.existsSync(tempDir)) {
-                fs.mkdirSync(tempDir, { recursive: true });
-                logger.info(`Diretório temporário criado: ${tempDir}`);
-            }
-
-            const filePath = path.join(tempDir, `${Date.now()}-audio.ogg`);
-            fs.writeFileSync(filePath, arquivo.buffer);
-
-            await cliente.sendMessage(numeroFormatado, MessageMedia.fromFilePath(filePath), { sendAudioAsVoice: true });
-
-            fs.unlinkSync(filePath); // Limpar arquivo temporário
-            logger.info(`Mensagem de voz enviada e arquivo removido: ${filePath}`);
-        } else if (arquivo) {
-            logger.info(`Enviando mídia para ${numeroFormatado} usando ID: ${idConexao}`);
-            const filePath = path.join(__dirname, 'uploads', arquivo.originalname);
-            fs.writeFileSync(filePath, arquivo.buffer);
-
-            await cliente.sendMessage(numeroFormatado, MessageMedia.fromFilePath(filePath));
-
-            fs.unlinkSync(filePath); // Limpar arquivo temporário
-            logger.info(`Mídia enviada e arquivo removido: ${filePath}`);
-        } else if (mensagem) {
-            logger.info(`Enviando mensagem de texto para ${numeroFormatado} usando ID: ${idConexao}`);
-            await cliente.sendMessage(numeroFormatado, mensagem);
-        } else {
-            return res.status(400).json({ message: 'Nenhuma mensagem ou arquivo fornecido.' });
-        }
-
-        // Salvar a mensagem no banco de dados
-        const conexao = await pool.getConnection();
-        const mensagemId = uuidv4();
-        await conexao.execute(
-            'INSERT INTO mensagens (id, origem, destino, corpo, timestamp) VALUES (?, ?, ?, ?, ?)',
-            [mensagemId, idConexao, numeroFormatado, mensagem || 'Arquivo enviado', Date.now()]
-        );
-        conexao.release();
-
+        await cliente.sendMessage(numeroFormatado, mensagem);
+        logger.info(`Mensagem de texto enviada para ${numeroFormatado} usando ID: ${idConexao}`);
         res.status(200).json({ message: 'Mensagem enviada com sucesso' });
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
-        logger.error('Erro ao enviar mensagem:', errorMessage);
-        res.status(500).json({ message: 'Erro ao enviar mensagem', details: errorMessage });
+        logger.error('Erro ao enviar mensagem de texto:', errorMessage);
+        res.status(500).json({ message: 'Erro ao enviar mensagem de texto', details: errorMessage });
+    }
+});
+
+// Enviar mensagem de voz
+app.post('/api/mensagens/voz', controladorIndex.upload, async (req, res) => {
+    const { idConexao, numero }: { idConexao: string, numero: string } = req.body;
+    const arquivo = req.file;
+
+    if (!idConexao || !numero || !arquivo) {
+        logger.error('Erro: ID da conexão, número e arquivo são obrigatórios.', { idConexao, numero });
+        return res.status(400).json({ message: 'ID da conexão, número e arquivo são obrigatórios.' });
+    }
+
+    const cliente = clientes[idConexao];
+    if (!cliente) {
+        logger.error('Erro: Conexão não encontrada.', { idConexao });
+        return res.status(404).json({ message: 'Conexão não encontrada' });
+    }
+
+    try {
+        const numeroFormatado = numero.includes('@c.us') ? numero : `${numero}@c.us`;
+        const tempDir = path.join(__dirname, 'temp');
+
+        if (!fs.existsSync(tempDir)) {
+            fs.mkdirSync(tempDir, { recursive: true });
+            logger.info(`Diretório temporário criado: ${tempDir}`);
+        }
+
+        const filePath = path.join(tempDir, `${Date.now()}-audio.ogg`);
+        fs.writeFileSync(filePath, arquivo.buffer);
+
+        await cliente.sendMessage(numeroFormatado, MessageMedia.fromFilePath(filePath), { sendAudioAsVoice: true });
+
+        fs.unlinkSync(filePath); // Limpar arquivo temporário
+        logger.info(`Mensagem de voz enviada para ${numeroFormatado} usando ID: ${idConexao}`);
+        res.status(200).json({ message: 'Mensagem de voz enviada com sucesso' });
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+        logger.error('Erro ao enviar mensagem de voz:', errorMessage);
+        res.status(500).json({ message: 'Erro ao enviar mensagem de voz', details: errorMessage });
     }
 });
 

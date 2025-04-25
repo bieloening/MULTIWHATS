@@ -15,33 +15,52 @@ class ControladorIndex {
         return this.uploadMiddleware.single('arquivo');
     }
 
-    async enviarMensagemOuMidia(req: Request, res: Response) {
-        const { idConexao, numero, mensagem, tipo } = req.body;
-        const arquivo = req.file;
+    async enviarMensagem(req: Request, res: Response) {
+        const { idConexao, numero, mensagem } = req.body;
 
-        if (!idConexao || !numero || (!mensagem && !arquivo)) {
-            return res.status(400).json({ error: 'ID da conexão, número e mensagem ou arquivo são obrigatórios.' });
+        // Validação de entrada
+        if (!idConexao || !numero || !mensagem) {
+            return res.status(400).json({ error: 'ID da conexão, número e mensagem são obrigatórios.' });
         }
 
         try {
-            if (tipo === 'voz' && arquivo) {
-                console.log('Enviando mensagem de voz...');
-                await this.servicoWhatsApp.enviarMensagemDeVoz(idConexao, numero, arquivo.buffer);
-            } else if (arquivo) {
-                console.log('Enviando mídia...');
-                await this.servicoWhatsApp.enviarArquivo(idConexao, numero, arquivo.buffer);
-            } else if (mensagem) {
-                console.log('Enviando mensagem de texto...');
-                await this.servicoWhatsApp.enviarMensagem(idConexao, numero, mensagem);
-            } else {
-                return res.status(400).json({ error: 'Nenhuma mensagem ou arquivo fornecido.' });
-            }
+            console.log('Enviando mensagem de texto...');
+            await this.servicoWhatsApp.enviarMensagem(idConexao, numero, mensagem);
 
+            // Resposta de sucesso
             res.status(200).json({ message: 'Mensagem enviada com sucesso.' });
         } catch (error) {
-            console.error('Erro ao enviar mensagem ou mídia:', error);
+            console.error('Erro ao enviar mensagem:', error);
+
+            // Tratamento de erro detalhado
             const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
-            res.status(500).json({ error: 'Erro ao enviar mensagem ou mídia.', details: errorMessage });
+            res.status(500).json({ error: 'Erro ao enviar mensagem.', details: errorMessage });
+        }
+    }
+
+    async enviarMensagemDeVoz(req: Request, res: Response) {
+        const { idConexao, numero } = req.body;
+        const arquivo = req.file;
+
+        // Validação de entrada
+        if (!idConexao || !numero || !arquivo) {
+            return res.status(400).json({ error: 'ID da conexão, número e arquivo são obrigatórios.' });
+        }
+
+        try {
+            console.log('Enviando mensagem de voz...');
+            if (!arquivo.buffer) {
+                throw new Error('Arquivo de áudio inválido ou ausente.');
+            }
+
+            await this.servicoWhatsApp.enviarMensagemDeVoz(idConexao, numero, arquivo.buffer);
+
+            res.status(200).json({ message: 'Mensagem de voz enviada com sucesso.' });
+        } catch (error) {
+            console.error('Erro ao enviar mensagem de voz:', error);
+
+            const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+            res.status(500).json({ error: 'Erro ao enviar mensagem de voz.', details: errorMessage });
         }
     }
 
