@@ -55,6 +55,7 @@ const Conexoes: React.FC = () => {
         console.log('Adicionando nova conexão...');
         try {
             const response = await axios.post('http://localhost:3000/api/conexoes');
+
             if (response.status === 201) {
                 console.log('Conexão adicionada com sucesso:', response.data.id);
 

@@ -389,6 +389,7 @@ const Chat: React.FC = () => {
         console.error("Erro: Nenhum áudio gravado ou conversa selecionada.");
         return;
     }
+    console.log("Arquivo de áudio a ser enviado:", audioBlob.current);
 
     try {
         const idConta = localStorage.getItem("idConexao");
@@ -401,7 +402,6 @@ const Chat: React.FC = () => {
         const formData = new FormData();
         formData.append("idConexao", idConta); // Certifique-se de usar o mesmo nome configurado no backend
         formData.append("numero", conversaSelecionada.number);
-        formData.append("tipo", "voz"); // Adicione o tipo para diferenciar mensagens de voz
         formData.append("arquivo", audioBlob.current); // O nome 'arquivo' deve corresponder ao configurado no multer
 
         const response = await axios.post("http://localhost:3000/api/mensagens/voz", formData, {

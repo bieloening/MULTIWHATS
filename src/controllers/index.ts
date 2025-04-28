@@ -11,9 +11,17 @@ class ControladorIndex {
         this.uploadMiddleware = multer({ storage: multer.memoryStorage() });
     }
 
-    public get upload() {
-        return this.uploadMiddleware.single('arquivo');
-    }
+    public upload = (req: any, res: any, next: any) => {
+        console.log('Middleware multer chamado. Verificando arquivo...');
+        this.uploadMiddleware.single('arquivo')(req, res, (err: any) => {
+            if (err) {
+                console.error('Erro no multer:', err);
+                return res.status(500).json({ message: 'Erro ao processar arquivo.' });
+            }
+            console.log('Arquivo processado pelo multer:', req.file);
+            next();
+        });
+    };
 
     async enviarMensagem(req: Request, res: Response) {
         const { idConexao, numero, mensagem } = req.body;

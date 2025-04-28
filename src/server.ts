@@ -12,6 +12,8 @@ import ControladorIndex from './controllers/index'; // Importa o controlador
 import { definirRotas } from './routes/index';
 import winston from 'winston';
 import Joi from 'joi';
+import ffmpeg from 'fluent-ffmpeg';
+import { path as ffmpegPath } from '@ffmpeg-installer/ffmpeg';
 
 // Configuração do logger
 const logger = winston.createLogger({
@@ -101,6 +103,12 @@ const limparDiretorioAutenticacao = async (id: string) => {
     }
 };
 
+// Garante que o diretório de mídia exista
+const mediaDir = path.join(__dirname, 'media');
+if (!fs.existsSync(mediaDir)) {
+    fs.mkdirSync(mediaDir, { recursive: true });
+}
+
 // Garante que o diretório de uploads existe
 const uploadDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadDir)) {
@@ -114,19 +122,8 @@ app.get('/api/conexoes', (req, res) => {
     res.json(conexoes);
 });
 
-// Validação para a rota /api/conexoes
-const conexoesSchema = Joi.object({
-  nome: Joi.string().required(),
-  numero: Joi.string().pattern(/^\d+$/).required(), // Apenas números
-});
-
 // Adicionar uma nova conexão
 app.post('/api/conexoes', async (req, res) => {
-  const { error } = conexoesSchema.validate(req.body);
-  if (error) {
-    return res.status(400).json({ error: error.details[0].message });
-  }
-
   const id = uuidv4(); // Gerar um ID único
   logger.info('POST /api/conexoes', { id });
 
@@ -214,9 +211,12 @@ app.post('/api/ativar', (req, res) => {
                         const media = await msg.downloadMedia();
                         if (media) {
                             // Salvar a mídia em um diretório local ou em um serviço de armazenamento
-                            const filePath = path.join(__dirname, 'media', `${msg.id._serialized}.${media.mimetype.split('/')[1]}`);
+                            // Corrige o nome do arquivo para evitar valores inválidos
+                            const fileName = `${msg.id._serialized}.${media.mimetype.split('/')[1]}`;
+                            const filePath = path.join(mediaDir, fileName);
+
                             fs.writeFileSync(filePath, media.data, 'base64');
-                            mediaUrl = `/media/${msg.id._serialized}.${media.mimetype.split('/')[1]}`;
+                            mediaUrl = `/media/${fileName}`;
                         }
                     } catch (error) {
                         logger.error('Erro ao baixar mídia:', error);
@@ -523,43 +523,85 @@ app.post('/api/mensagens', async (req, res) => {
     }
 });
 
-// Enviar mensagem de voz
+// Adicionar log para verificar o ID da conexão recebido
 app.post('/api/mensagens/voz', controladorIndex.upload, async (req, res) => {
-    const { idConexao, numero }: { idConexao: string, numero: string } = req.body;
-    const arquivo = req.file;
+    console.log('Requisição recebida na rota /api/mensagens/voz');
+
+    const { idConexao, numero } = req.body;
+    const arquivo = req.file; // Corrigido para acessar o arquivo processado pelo multer
 
     if (!idConexao || !numero || !arquivo) {
-        logger.error('Erro: ID da conexão, número e arquivo são obrigatórios.', { idConexao, numero });
+        console.error('Erro: ID da conexão, número ou arquivo ausente.');
         return res.status(400).json({ message: 'ID da conexão, número e arquivo são obrigatórios.' });
     }
 
+    console.log(`Arquivo recebido: ${arquivo.originalname}, Tamanho: ${arquivo.size} bytes`);
+
     const cliente = clientes[idConexao];
     if (!cliente) {
-        logger.error('Erro: Conexão não encontrada.', { idConexao });
         return res.status(404).json({ message: 'Conexão não encontrada' });
     }
 
     try {
         const numeroFormatado = numero.includes('@c.us') ? numero : `${numero}@c.us`;
+        // Salvar o arquivo no disco antes de processá-lo
         const tempDir = path.join(__dirname, 'temp');
-
         if (!fs.existsSync(tempDir)) {
             fs.mkdirSync(tempDir, { recursive: true });
-            logger.info(`Diretório temporário criado: ${tempDir}`);
         }
 
-        const filePath = path.join(tempDir, `${Date.now()}-audio.ogg`);
-        fs.writeFileSync(filePath, arquivo.buffer);
+        const webmFilePath = path.join(tempDir, `${Date.now()}-${arquivo.originalname}`);
+        fs.writeFileSync(webmFilePath, arquivo.buffer);
 
-        await cliente.sendMessage(numeroFormatado, MessageMedia.fromFilePath(filePath), { sendAudioAsVoice: true });
+        console.log(`Arquivo salvo no disco: ${webmFilePath}`);
 
-        fs.unlinkSync(filePath); // Limpar arquivo temporário
-        logger.info(`Mensagem de voz enviada para ${numeroFormatado} usando ID: ${idConexao}`);
+        const oggFilePath = path.join(tempDir, `${Date.now()}-audio.ogg`);
+
+        console.log(`Recebendo requisição para enviar mensagem de voz. ID da conexão: ${idConexao}, Número: ${numero}`);
+        console.log(`Arquivo recebido: ${arquivo?.filename || 'Nenhum arquivo recebido'}`);
+
+        // Verificar se o arquivo de entrada existe antes de iniciar a conversão
+        if (!fs.existsSync(webmFilePath)) {
+            console.error(`Erro: Arquivo de entrada não encontrado: ${webmFilePath}`);
+            return res.status(400).json({ message: 'Arquivo de entrada não encontrado' });
+        }
+
+        console.log(`Iniciando conversão de áudio: ${webmFilePath} para ${oggFilePath}`);
+
+        // Converter o arquivo de .webm para .ogg
+        await new Promise((resolve, reject) => {
+            ffmpeg(webmFilePath)
+                .toFormat('ogg')
+                .on('start', (commandLine) => {
+                    console.log(`Comando ffmpeg iniciado: ${commandLine}`);
+                })
+                .on('end', () => {
+                    console.log(`Conversão concluída: ${oggFilePath}`);
+                    if (fs.existsSync(oggFilePath)) {
+                        console.log('Arquivo .ogg criado com sucesso.');
+                        resolve(undefined); // Corrigido para passar um valor explícito
+                    } else {
+                        console.error('Erro: Arquivo .ogg não foi criado.');
+                        reject(new Error('Arquivo .ogg não foi criado.'));
+                    }
+                })
+                .on('error', (error) => {
+                    console.error(`Erro durante a conversão: ${error.message}`);
+                    reject(error);
+                })
+                .save(oggFilePath);
+        });
+
+        console.log(`Enviando mensagem de voz para o número: ${numeroFormatado}`);
+        await cliente.sendMessage(numeroFormatado, MessageMedia.fromFilePath(oggFilePath), { sendAudioAsVoice: true });
+        console.log(`Mensagem de voz enviada com sucesso para o número: ${numeroFormatado}`);
+
+        fs.unlinkSync(webmFilePath); // Limpar arquivo original
+        fs.unlinkSync(oggFilePath); // Limpar arquivo convertido
+
         res.status(200).json({ message: 'Mensagem de voz enviada com sucesso' });
     } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
-        logger.error('Erro ao enviar mensagem de voz:', errorMessage);
-        res.status(500).json({ message: 'Erro ao enviar mensagem de voz', details: errorMessage });
+        res.status(500).json({ message: 'Erro ao enviar mensagem de voz'});
     }
 });
 
@@ -569,7 +611,7 @@ app.use('/media', express.static(path.join(__dirname, 'media')));
 // Rota para servir o frontend React (caso seja um SPA)
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
-});
+ });
 
 // Inicializa o servidor
 httpServer.listen(PORTA, () => {
