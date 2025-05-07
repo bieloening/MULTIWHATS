@@ -12,8 +12,8 @@ import ControladorIndex from './controllers/index'; // Importa o controlador
 import { definirRotas } from './routes/index';
 import winston from 'winston';
 import Joi from 'joi';
-import ffmpeg from 'fluent-ffmpeg';
-import { path as ffmpegPath } from '@ffmpeg-installer/ffmpeg';
+import { convertAudio } from './services/whatsappService'; // Importa a função convertAudio
+import cors from 'cors';
 
 // Configuração do logger
 const logger = winston.createLogger({
@@ -42,7 +42,6 @@ const controladorIndex = new ControladorIndex(); // Instancia o controlador
 
 const PORTA = process.env.PORT || 3000;
 
-// Define as rotas
 definirRotas(app);
 
 // Configuração do MySQL
@@ -115,12 +114,6 @@ if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
     logger.info(`Diretório de uploads criado: ${uploadDir}`);
 }
-
-// Obter todas as conexões
-app.get('/api/conexoes', (req, res) => {
-    logger.debug('GET /api/conexoes', { conexoes });
-    res.json(conexoes);
-});
 
 // Adicionar uma nova conexão
 app.post('/api/conexoes', async (req, res) => {
@@ -328,6 +321,12 @@ app.get('/api/conexoes/:id', (req, res) => {
     }
 });
 
+// Rota para listar todas as conexões
+app.get('/api/conexoes', (req, res) => {
+    logger.info('GET /api/conexoes');
+    res.json(conexoes); // Retorna todas as conexões armazenadas
+});
+
 // Função utilitária para validar e formatar o número
 const validarNumero = (numero: string): string | null => {
     if (!numero) return null;
@@ -523,12 +522,11 @@ app.post('/api/mensagens', async (req, res) => {
     }
 });
 
-// Adicionar log para verificar o ID da conexão recebido
 app.post('/api/mensagens/voz', controladorIndex.upload, async (req, res) => {
     console.log('Requisição recebida na rota /api/mensagens/voz');
 
     const { idConexao, numero } = req.body;
-    const arquivo = req.file; // Corrigido para acessar o arquivo processado pelo multer
+    const arquivo = req.file;
 
     if (!idConexao || !numero || !arquivo) {
         console.error('Erro: ID da conexão, número ou arquivo ausente.');
@@ -550,54 +548,33 @@ app.post('/api/mensagens/voz', controladorIndex.upload, async (req, res) => {
             fs.mkdirSync(tempDir, { recursive: true });
         }
 
-        const webmFilePath = path.join(tempDir, `${Date.now()}-${arquivo.originalname}`);
+        let webmFilePath = path.join(tempDir, `${Date.now()}-${arquivo.originalname}`);
         fs.writeFileSync(webmFilePath, arquivo.buffer);
 
         console.log(`Arquivo salvo no disco: ${webmFilePath}`);
 
-        const oggFilePath = path.join(tempDir, `${Date.now()}-audio.ogg`);
+        // Caminho para o arquivo convertido
+        const oggFilePath = path.join(tempDir, `${Date.now()}-${path.parse(arquivo.originalname).name}.ogg`);
 
-        console.log(`Recebendo requisição para enviar mensagem de voz. ID da conexão: ${idConexao}, Número: ${numero}`);
-        console.log(`Arquivo recebido: ${arquivo?.filename || 'Nenhum arquivo recebido'}`);
-
-        // Verificar se o arquivo de entrada existe antes de iniciar a conversão
-        if (!fs.existsSync(webmFilePath)) {
-            console.error(`Erro: Arquivo de entrada não encontrado: ${webmFilePath}`);
-            return res.status(400).json({ message: 'Arquivo de entrada não encontrado' });
+        // Converter o arquivo para .ogg
+        console.log('Iniciando a conversão do arquivo para .ogg...');
+        try {
+            await convertAudio(webmFilePath, oggFilePath);
+            console.log(`Arquivo convertido com sucesso: ${oggFilePath}`);
+        } catch (error) {
+            console.error('Erro durante a conversão do arquivo:', error);
+            return res.status(400).json({ message: 'Erro ao converter o arquivo para .ogg.' });
         }
 
-        console.log(`Iniciando conversão de áudio: ${webmFilePath} para ${oggFilePath}`);
-
-        // Converter o arquivo de .webm para .ogg
-        await new Promise((resolve, reject) => {
-            ffmpeg(webmFilePath)
-                .toFormat('ogg')
-                .on('start', (commandLine) => {
-                    console.log(`Comando ffmpeg iniciado: ${commandLine}`);
-                })
-                .on('end', () => {
-                    console.log(`Conversão concluída: ${oggFilePath}`);
-                    if (fs.existsSync(oggFilePath)) {
-                        console.log('Arquivo .ogg criado com sucesso.');
-                        resolve(undefined); // Corrigido para passar um valor explícito
-                    } else {
-                        console.error('Erro: Arquivo .ogg não foi criado.');
-                        reject(new Error('Arquivo .ogg não foi criado.'));
-                    }
-                })
-                .on('error', (error) => {
-                    console.error(`Erro durante a conversão: ${error.message}`);
-                    reject(error);
-                })
-                .save(oggFilePath);
-        });
-
-        console.log(`Enviando mensagem de voz para o número: ${numeroFormatado}`);
-        await cliente.sendMessage(numeroFormatado, MessageMedia.fromFilePath(oggFilePath), { sendAudioAsVoice: true });
+        // Garantir que o áudio convertido seja enviado como mensagem de voz
+        const media = MessageMedia.fromFilePath(oggFilePath);
+        console.log(`Enviando mensagem de voz com o arquivo convertido: ${oggFilePath}`);
+        await cliente.sendMessage(numeroFormatado, media, { sendAudioAsVoice: true });
         console.log(`Mensagem de voz enviada com sucesso para o número: ${numeroFormatado}`);
 
-        fs.unlinkSync(webmFilePath); // Limpar arquivo original
-        fs.unlinkSync(oggFilePath); // Limpar arquivo convertido
+        // Limpar arquivos temporários
+        fs.unlinkSync(webmFilePath);
+        fs.unlinkSync(oggFilePath);
 
         res.status(200).json({ message: 'Mensagem de voz enviada com sucesso' });
     } catch (error) {
@@ -605,15 +582,16 @@ app.post('/api/mensagens/voz', controladorIndex.upload, async (req, res) => {
     }
 });
 
-// Servir arquivos de mídia
 app.use('/media', express.static(path.join(__dirname, 'media')));
 
-// Rota para servir o frontend React (caso seja um SPA)
+app.use('/api', (req, res, next) => {
+    res.status(404).json({ message: 'Endpoint da API não encontrado' });
+});
+
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
  });
 
-// Inicializa o servidor
 httpServer.listen(PORTA, () => {
     logger.info(`Servidor rodando na porta ${PORTA}`);
 });

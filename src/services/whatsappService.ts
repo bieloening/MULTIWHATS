@@ -2,6 +2,8 @@ import { Client, LocalAuth, MessageMedia } from 'whatsapp-web.js';
 import QRCode from 'qrcode';
 import path from 'path';
 import fs from 'fs';
+import ffmpeg from 'fluent-ffmpeg';
+import { statSync } from 'fs';
 
 class ServicoWhatsApp {
     private conexoes: Map<string, Client>;
@@ -152,24 +154,76 @@ class ServicoWhatsApp {
 
         const tempDir = path.join(__dirname, '../../temp');
         if (!fs.existsSync(tempDir)) {
+            console.log(`Criando diretório temporário: ${tempDir}`);
             fs.mkdirSync(tempDir, { recursive: true });
         }
 
-        const filePath = path.join(tempDir, `${Date.now()}-audio.ogg`);
-        try {
-            fs.writeFileSync(filePath, buffer);
+        // Determinar a extensão do arquivo com base no tipo MIME
+        const extension = 'webm'; // Para este caso, assumimos que o tipo é sempre webm
+        const originalFilePath = path.join(tempDir, `${Date.now()}-audio.${extension}`);
+        const convertedFilePath = path.join(tempDir, `${Date.now()}-audio.mp3`);
 
-            const media = MessageMedia.fromFilePath(filePath);
-            await cliente.sendMessage(`${numero}@c.us`, media, { sendAudioAsVoice: true });
-            console.log(`Mensagem de voz enviada com sucesso para ${numero}`);
-        } catch (error) {
-            console.error('Erro ao enviar mensagem de voz:', error);
-            throw new Error('Erro ao enviar mensagem de voz.');
-        } finally {
-            if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
-                console.log(`Arquivo temporário removido: ${filePath}`);
+        console.log(`Arquivo original será salvo como: ${originalFilePath}`);
+        console.log(`Arquivo convertido será salvo como: ${convertedFilePath}`);
+
+        console.log(`Criando arquivo temporário: ${originalFilePath}`);
+        console.log(`Tamanho do buffer recebido: ${buffer.length} bytes`);
+
+        if (buffer.length === 0) {
+            throw new Error('O buffer fornecido está vazio.');
+        }
+
+        try {
+            fs.writeFileSync(originalFilePath, buffer);
+            console.log(`Arquivo temporário criado com sucesso: ${originalFilePath}`);
+        } catch (error: unknown) {
+            if (error instanceof Error) {
+                console.error(`Erro ao criar o arquivo temporário: ${error.message}`);
+            } else {
+                console.error('Erro ao criar o arquivo temporário:', error);
             }
+            throw new Error('Falha ao criar o arquivo temporário.');
+        }
+
+        const stats = fs.statSync(originalFilePath);
+        console.log(`Tamanho do arquivo temporário: ${stats.size} bytes`);
+
+        if (stats.size === 0) {
+            throw new Error('O arquivo temporário criado está vazio.');
+        }
+
+        // Validação do tipo MIME
+        const mimeType = 'audio/webm'; // Supondo que o tipo MIME seja conhecido
+        if (mimeType !== 'audio/webm') {
+            throw new Error(`Tipo MIME não suportado: ${mimeType}`);
+        }
+
+        console.log('Iniciando a conversão do arquivo...');
+        try {
+            await convertAudio(originalFilePath, convertedFilePath);
+            console.log('Conversão concluída com sucesso.');
+        } catch (error: unknown) {
+            if (error instanceof Error) {
+                console.error(`Erro durante a conversão do arquivo: ${error.message}`);
+            } else {
+                console.error('Erro desconhecido durante a conversão do arquivo:', error);
+            }
+            throw new Error('Falha na conversão do arquivo.');
+        }
+
+        console.log('Iniciando o envio da mensagem de voz com o arquivo convertido...');
+        const media = MessageMedia.fromFilePath(convertedFilePath); // Usa o arquivo convertido
+        await cliente.sendMessage(`${numero}@c.us`, media, { sendAudioAsVoice: true });
+        console.log(`Mensagem de voz enviada com sucesso para ${numero}`);
+
+        console.log('Limpando arquivos temporários...');
+        if (fs.existsSync(originalFilePath)) {
+            fs.unlinkSync(originalFilePath);
+            console.log(`Arquivo temporário removido: ${originalFilePath}`);
+        }
+        if (fs.existsSync(convertedFilePath)) {
+            fs.unlinkSync(convertedFilePath);
+            console.log(`Arquivo temporário removido: ${convertedFilePath}`);
         }
     }
 
@@ -201,5 +255,28 @@ class ServicoWhatsApp {
         return this.qrCodes.get(idConta);
     }
 }
+
+async function validateFile(filePath: string): Promise<void> {
+    if (!fs.existsSync(filePath)) {
+        throw new Error(`Arquivo não encontrado: ${filePath}`);
+    }
+
+    const stats = statSync(filePath);
+    if (stats.size === 0) {
+        throw new Error(`Arquivo vazio: ${filePath}`);
+    }
+}
+
+export async function convertAudio(inputPath: string, outputPath: string): Promise<void> {
+    await validateFile(inputPath);
+    return new Promise((resolve, reject) => {
+        ffmpeg(inputPath)
+            .toFormat('mp3') // Altera o formato de saída para .mp3
+            .on('end', () => resolve())
+            .on('error', (err) => reject(err))
+            .save(outputPath);
+    });
+}
+
 
 export default ServicoWhatsApp;

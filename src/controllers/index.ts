@@ -2,13 +2,24 @@ import ServicoWhatsApp from '../services/whatsappService';
 import { Request, Response } from 'express';
 import multer, { Multer } from 'multer';
 
+// Configura o multer para armazenar arquivos na memória
+const storage = multer.memoryStorage();
+
 class ControladorIndex {
     private servicoWhatsApp: ServicoWhatsApp;
     private uploadMiddleware: Multer;
 
     constructor() {
         this.servicoWhatsApp = new ServicoWhatsApp();
-        this.uploadMiddleware = multer({ storage: multer.memoryStorage() });
+        this.uploadMiddleware = multer({
+            storage: multer.memoryStorage(),
+            fileFilter: (req, file, cb) => {
+                if (file.mimetype !== 'audio/webm') {
+                    return cb(new Error('Tipo de arquivo não suportado. Apenas arquivos .webm são permitidos.'));
+                }
+                cb(null, true);
+            },
+        });
     }
 
     public upload = (req: any, res: any, next: any) => {
@@ -16,9 +27,15 @@ class ControladorIndex {
         this.uploadMiddleware.single('arquivo')(req, res, (err: any) => {
             if (err) {
                 console.error('Erro no multer:', err);
-                return res.status(500).json({ message: 'Erro ao processar arquivo.' });
+                return res.status(400).json({ message: 'Erro ao processar arquivo. Verifique o formato.' });
             }
-            console.log('Arquivo processado pelo multer:', req.file);
+
+            if (req.file) {
+                const extension = 'webm';
+                req.file.originalname = `${Date.now()}-audio.${extension}`;
+                console.log('Arquivo processado pelo multer:', req.file);
+            }
+
             next();
         });
     };

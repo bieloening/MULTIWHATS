@@ -43,6 +43,10 @@ const Chat: React.FC = () => {
   const isMounted = useRef(true); // Flag para verificar se o componente está montado
   const [audioDuration, setAudioDuration] = useState<number>(0); // Duração do áudio em segundos
 
+  const recorderOptions = {
+    mimeType: "audio/webm;codecs=opus",
+  };
+
   useEffect(() => {
     isMounted.current = true;
 
@@ -323,41 +327,43 @@ const Chat: React.FC = () => {
 
   const iniciarGravacao = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const recorder = new MediaRecorder(stream, {
+            mimeType: "audio/webm;codecs=opus",
+        });
 
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioBlob.current = event.data;
-          const url = URL.createObjectURL(event.data);
-          audioUrl.current = url;
-          waveSurferRef.current?.load(url);
+        recorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+                audioBlob.current = event.data;
+                const url = URL.createObjectURL(event.data);
+                audioUrl.current = url;
+                waveSurferRef.current?.load(url);
 
-          // Calcular a duração do áudio
-          const audio = new Audio(url);
-          audio.onloadedmetadata = () => {
-            setAudioDuration(Math.ceil(audio.duration));
-          };
-        }
-      };
+                // Calcular a duração do áudio
+                const audio = new Audio(url);
+                audio.onloadedmetadata = () => {
+                    setAudioDuration(Math.ceil(audio.duration));
+                };
+            }
+        };
 
-      recorder.onstop = () => {
-        setRecordingTime(0);
-        if (recordingInterval.current) {
-          clearInterval(recordingInterval.current);
-        }
-        setIsRecording(false);
-      };
+        recorder.onstop = () => {
+            setRecordingTime(0);
+            if (recordingInterval.current) {
+                clearInterval(recordingInterval.current);
+            }
+            setIsRecording(false);
+        };
 
-      recorder.start();
-      mediaRecorder.current = recorder; // Armazena o MediaRecorder na ref
-      setIsRecording(true);
+        recorder.start();
+        mediaRecorder.current = recorder; // Armazena o MediaRecorder na ref
+        setIsRecording(true);
 
-      recordingInterval.current = setInterval(() => {
-        setRecordingTime((prev) => prev + 1);
-      }, 1000);
+        recordingInterval.current = setInterval(() => {
+            setRecordingTime((prev) => prev + 1);
+        }, 1000);
     } catch (error) {
-      console.error("Erro ao iniciar gravação:", error);
+        console.error("Erro ao iniciar gravação:", error);
     }
   };
 
@@ -385,11 +391,16 @@ const Chat: React.FC = () => {
   };
 
   const enviarAudio = async () => {
+    // Adicionar logs para depuração
+    console.log('Estado de audioBlob:', audioBlob.current);
+    console.log('Estado de conversaSelecionada:', conversaSelecionada);
+
     if (!audioBlob.current || !conversaSelecionada) {
         console.error("Erro: Nenhum áudio gravado ou conversa selecionada.");
         return;
     }
     console.log("Arquivo de áudio a ser enviado:", audioBlob.current);
+    console.log("Arquivo de áudio enviado para processamento no backend. Será convertido para .ogg antes do envio.");
 
     try {
         const idConta = localStorage.getItem("idConexao");
