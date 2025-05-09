@@ -1,75 +1,68 @@
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
-const CopyWebpackPlugin = require('copy-webpack-plugin');
 
-module.exports = {
-    entry: {
-        index: './src/frontend/index.tsx',
-        another: './src/frontend/another-module.tsx',
-    },
-    output: {
-        path: path.resolve(__dirname, 'dist'),
-        filename: '[name].bundle.js',
-        publicPath: '/',
-    },
-    resolve: {
-        extensions: ['.ts', '.tsx', '.js', '.jsx'],
-    },
-    module: {
-        rules: [
-            {
-                test: /\.tsx?$/,
-                use: 'ts-loader',
-                exclude: /node_modules/,
-            },
-            {
-                test: /\.css$/,
-                use: ['style-loader', 'css-loader'],
-                exclude: /node_modules/,
-            },
-        ],
-    },
-    plugins: [
-        new HtmlWebpackPlugin({
-            template: './src/frontend/index.html',
-            filename: 'index.html',
-        }),
-        new CopyWebpackPlugin({
-            patterns: [
-                { from: 'src/frontend/App.css', to: 'App.css' },
+module.exports = (env, argv) => {
+    const isProduction = argv.mode === 'production';
+
+    return {
+        entry: {
+            index: './frontend/src/index.tsx',
+            another: './frontend/src/another-module.tsx',
+        },
+        output: {
+            path: path.resolve(__dirname, isProduction ? 'dist' : 'frontend/build'),
+            filename: '[name].bundle.js',
+            publicPath: '/',
+        },
+        resolve: {
+            extensions: ['.ts', '.tsx', '.js', '.jsx'],
+        },
+        module: {
+            rules: [
+                {
+                    test: /\.tsx?$/,
+                    use: 'ts-loader',
+                    exclude: /node_modules/,
+                },
+                {
+                    test: /\.css$/,
+                    use: ['style-loader', 'css-loader'],
+                    exclude: /node_modules/,
+                },
             ],
-        }),
-    ],
-    optimization: {
-        splitChunks: {
-            chunks: 'all',
-            cacheGroups: {
-                defaultVendors: {
-                    test: /[\\/]node_modules[\\/]/,
-                    name: 'vendors',
-                    chunks: 'all',
-                },
-                shared: {
-                    test: /[\\/]node_modules[\\/](lodash)[\\/]/,
-                    name: 'shared',
-                    chunks: 'all',
+        },
+        plugins: [
+            new HtmlWebpackPlugin({
+                template: './frontend/public/index.html',
+                filename: 'index.html',
+            }),
+        ],
+        optimization: {
+            splitChunks: {
+                chunks: 'all',
+                cacheGroups: {
+                    defaultVendors: {
+                        test: /[\\/]node_modules[\\/]/,
+                        name: 'vendors',
+                        chunks: 'all',
+                    },
                 },
             },
+            runtimeChunk: 'single',
         },
-        runtimeChunk: 'single',
-    },
-    performance: {
-        maxEntrypointSize: 244000, // Define o tamanho máximo do entrypoint
-        maxAssetSize: 244000, // Define o tamanho máximo dos assets
-    },
-    devServer: {
-        static: {
-            directory: path.join(__dirname, 'src/frontend'),
+        performance: {
+            maxEntrypointSize: 244000,
+            maxAssetSize: 244000,
         },
-        compress: true,
-        port: 9000,
-        historyApiFallback: true, // Adicionado para lidar com o roteamento do React
-    },
-    mode: 'development',
-    target: 'web',
+        devServer: {
+            static: {
+                directory: path.join(__dirname, 'frontend/public'),
+            },
+            compress: true,
+            port: 9000,
+            historyApiFallback: true,
+        },
+        mode: isProduction ? 'production' : 'development',
+        target: 'web',
+    };
 };

@@ -1,13 +1,26 @@
+# Node modules
 node_modules/
-dist/
+
+# Build outputs
+/dist/
+/frontend/build/
+
+# Logs
 *.log
+logs/
+
+# System files
 .DS_Store
 .env
 
 # Docker
-docker-compose.override.yml
+/docker-compose.override.yml
 *.dockerfile.wwebjs_cache
 
 # WhatsApp Web Auth
 .wwebjs_auth/
 .wwebjs_cache/
+
+# Temp and uploads
+temp/
+uploads/

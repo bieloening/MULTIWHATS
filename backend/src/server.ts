@@ -1,0 +1,597 @@
+import express from 'express';
+import path from 'path';
+import { Server } from 'socket.io';
+import { createServer } from 'http';
+import { Client, LocalAuth, MessageMedia } from 'whatsapp-web.js';
+import qrcode from 'qrcode';
+import fs from 'fs';
+import { rimraf } from 'rimraf'; // Atualize a importação para a versão mais recente do rimraf
+import mysql from 'mysql2/promise';
+import { v4 as uuidv4 } from 'uuid'; // Adicionar importação para gerar UUIDs
+import ControladorIndex from './controllers/index'; // Importa o controlador
+import { definirRotas } from './routes/index';
+import winston from 'winston';
+import Joi from 'joi';
+import { convertAudio } from './services/whatsappService'; // Importa a função convertAudio
+import cors from 'cors';
+
+// Configuração do logger
+const logger = winston.createLogger({
+    level: process.env.NODE_ENV === 'production' ? 'warn' : 'debug',
+    format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.printf(({ timestamp, level, message }) => {
+            return `${timestamp} [${level.toUpperCase()}]: ${message}`;
+        })
+    ),
+    transports: [
+        new winston.transports.Console(),
+        new winston.transports.File({ filename: 'logs/server.log' })
+    ]
+});
+
+const app = express();
+const httpServer = createServer(app);
+const io = new Server(httpServer);
+
+// Middleware para parsing de JSON com limite aumentado
+app.use(express.json({ limit: '50mb' })); // Aumenta o limite para 50 MB
+app.use(express.urlencoded({ limit: '50mb', extended: true })); // Aumenta o limite para dados codificados em URL
+
+const controladorIndex = new ControladorIndex(); // Instancia o controlador
+
+const PORTA = process.env.PORT || 3000;
+
+definirRotas(app);
+
+// Configuração do MySQL
+const configuracaoBanco = {
+    host: 'localhost',
+    user: 'root',
+    password: 'Agnus@1907',
+    database: 'multiwhats'
+};
+
+const pool = mysql.createPool(configuracaoBanco);
+
+const inicializarBanco = async () => {
+    const conexao = await pool.getConnection();
+    await conexao.query(`CREATE DATABASE IF NOT EXISTS ${configuracaoBanco.database}`);
+    await conexao.query(`USE ${configuracaoBanco.database}`);
+    await conexao.execute(`
+        CREATE TABLE IF NOT EXISTS mensagens (
+            id VARCHAR(255) PRIMARY KEY,
+            origem VARCHAR(255),
+            destino VARCHAR(255),
+            corpo TEXT,
+            timestamp BIGINT
+        )
+    `);
+    conexao.release();
+};
+
+inicializarBanco().catch(console.error);
+
+// Serve arquivos estáticos do frontend React
+app.use(express.static(path.join(__dirname, '../../frontend/build')));
+
+// Define explicitamente que conexoes é um array de strings
+const conexoes: { id: string, status: string }[] = []; // Conexões mantidas apenas em memória
+const clientes: { [key: string]: Client } = {};
+const qrCodes: { [key: string]: string } = {};
+const mensagensProcessadas: Set<string> = new Set(); // Adicione um conjunto para rastrear mensagens processadas
+
+// Função para garantir que o diretório de autenticação exista
+const garantirDiretorioAutenticacao = (id: string) => {
+    const diretorioAutenticacao = path.join(__dirname, '..', '.wwebjs_auth', `session-${id}`);
+    if (!fs.existsSync(diretorioAutenticacao)) {
+        fs.mkdirSync(diretorioAutenticacao, { recursive: true });
+    }
+};
+
+// Função para limpar o diretório de autenticação
+const limparDiretorioAutenticacao = async (id: string) => {
+    const diretorioAutenticacao = path.join(__dirname, '..', '.wwebjs_auth', `session-${id}`);
+    if (fs.existsSync(diretorioAutenticacao)) {
+        try {
+            await rimraf(diretorioAutenticacao); // Use a versão assíncrona do rimraf
+            logger.info(`Diretório de autenticação removido: ${diretorioAutenticacao}`);
+        } catch (error) {
+            logger.error(`Erro ao limpar o diretório de autenticação: ${error}`);
+        }
+    }
+};
+
+// Garante que o diretório de mídia exista
+const mediaDir = path.join(__dirname, 'media');
+if (!fs.existsSync(mediaDir)) {
+    fs.mkdirSync(mediaDir, { recursive: true });
+}
+
+// Garante que o diretório de uploads existe
+const uploadDir = path.join(__dirname, '..', 'uploads');
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+    logger.info(`Diretório de uploads criado: ${uploadDir}`);
+}
+
+// Adicionar uma nova conexão
+app.post('/api/conexoes', async (req, res) => {
+  const id = uuidv4(); // Gerar um ID único
+  logger.info('POST /api/conexoes', { id });
+
+  if (!conexoes.some(conexao => conexao.id === id)) {
+      conexoes.push({ id, status: 'inativo' });
+
+      // Garante que o diretório de autenticação exista
+      garantirDiretorioAutenticacao(id);
+
+      res.status(201).json({ message: 'Conexão adicionada com sucesso', id }); // Retorna o ID gerado
+  } else {
+      res.status(400).json({ message: 'ID da conexão já existente' });
+  }
+});
+
+// Ativar uma conexão
+app.post('/api/ativar', (req, res) => {
+    const { id }: { id: string } = req.body;
+    logger.info('POST /api/ativar', id);
+
+    const conexao = conexoes.find(conexao => conexao.id === id);
+    if (conexao) {
+        // Garante que o diretório de autenticação exista
+        garantirDiretorioAutenticacao(id);
+
+        // Cria um novo cliente do WhatsApp Web
+        const cliente = new Client({
+            authStrategy: new LocalAuth({ clientId: id })
+        });
+
+        clientes[id] = cliente;
+
+        cliente.on('qr', (qr) => {
+            logger.info('QR RECEIVED', qr);
+            qrcode.toDataURL(qr, (err, url) => {
+                if (err) {
+                    logger.error('Erro ao gerar QR Code:', err);
+                } else {
+                    qrCodes[id] = url;
+                    io.emit('qrCodeUpdated', { id, qrCode: url });
+                }
+            });
+        });
+
+        cliente.on('ready', () => {
+            logger.info(`Cliente ${id} está pronto!`);
+            conexao.status = 'ativo';
+            io.emit('statusUpdated', { id, status: 'ativo' });
+            logger.info('Conexões ativas no momento:', conexoes.map(c => ({ id: c.id, status: c.status })));
+        });
+
+        cliente.on('disconnected', async (reason) => {
+            logger.info('Client is disconnected!', reason);
+            conexao.status = 'inativo';
+            io.emit('statusUpdated', { id, status: 'inativo' });
+            try {
+                await cliente.logout();
+            } catch (e) {
+                logger.error('Erro ao deslogar:', e);
+            } finally {
+                try {
+                    await cliente.destroy();
+                } catch (e) {
+                    logger.error('Erro ao destruir cliente:', e);
+                }
+                delete clientes[id];
+            }
+        });
+
+        // Armazenar mensagens recebidas no banco de dados
+        cliente.on('message', async (msg) => {
+            if (msg.from === 'status@broadcast') {
+                logger.info('Mensagem ignorada: status@broadcast');
+                return; // Ignorar mensagens de broadcast
+            }
+
+            if (!mensagensProcessadas.has(msg.id._serialized)) {
+                logger.info('MESSAGE RECEIVED', msg);
+
+                const isMe = msg.from === cliente.info.wid._serialized;
+
+                let mediaUrl: string | null = null; // Update the type to allow both string and null
+                if (msg.hasMedia) {
+                    try {
+                        const media = await msg.downloadMedia();
+                        if (media) {
+                            // Salvar a mídia em um diretório local ou em um serviço de armazenamento
+                            // Corrige o nome do arquivo para evitar valores inválidos
+                            const fileName = `${msg.id._serialized}.${media.mimetype.split('/')[1]}`;
+                            const filePath = path.join(mediaDir, fileName);
+
+                            fs.writeFileSync(filePath, media.data, 'base64');
+                            mediaUrl = `/media/${fileName}`;
+                        }
+                    } catch (error) {
+                        logger.error('Erro ao baixar mídia:', error);
+                    }
+                }
+
+                io.emit('messageReceived', {
+                    idConexao: id,
+                    from: msg.from,
+                    body: msg.body,
+                    timestamp: msg.timestamp,
+                    isMe,
+                    mediaUrl,
+                });
+
+                mensagensProcessadas.add(msg.id._serialized);
+
+                try {
+                    const conexao = await pool.getConnection();
+                    const mensagemId = msg.id._serialized;
+
+                    const [rows] = await conexao.execute(
+                        'SELECT id FROM mensagens WHERE id = ?',
+                        [mensagemId]
+                    );
+
+                    if ((rows as mysql.RowDataPacket[]).length === 0) {
+                        await conexao.execute(
+                            'INSERT INTO mensagens (id, origem, destino, corpo, timestamp) VALUES (?, ?, ?, ?, ?)',
+                            [mensagemId, msg.from, msg.to, msg.body, msg.timestamp]
+                        );
+                    }
+
+                    conexao.release();
+                } catch (error) {
+                    const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+                    logger.error('Erro ao salvar mensagem no banco de dados:', errorMessage);
+                }
+            }
+        });
+
+        cliente.initialize();
+
+        res.status(200).json({ message: 'Conexão ativada com sucesso', qrCode: qrCodes[id] });
+    } else {
+        res.status(404).json({ message: 'Conexão não encontrada' });
+    }
+});
+
+// Desativar uma conexão
+app.post('/api/desativar', async (req, res) => {
+    const { id }: { id: string } = req.body;
+    logger.info('POST /api/desativar', id);
+
+    const conexao = conexoes.find(conexao => conexao.id === id);
+    if (conexao) {
+        if (clientes[id]) {
+            try {
+                await clientes[id].logout();
+            } catch (e) {
+                logger.error('Erro ao deslogar:', e);
+            } finally {
+                try {
+                    await clientes[id].destroy();
+                } catch (e) {
+                    logger.error('Erro ao destruir cliente:', e);
+                }
+                delete clientes[id];
+            }
+        }
+        conexao.status = 'inativo';
+        io.emit('statusUpdated', { id, status: 'inativo' });
+
+        // Limpa o diretório de autenticação
+        await limparDiretorioAutenticacao(id);
+
+        res.status(200).json({ message: 'Conexão desativada com sucesso' });
+    } else {
+        res.status(404).json({ message: 'Conexão não encontrada' });
+    }
+});
+
+// Obter QR Code de uma conexão existente
+app.get('/api/qrcode/:id', (req, res) => {
+    const { id }: { id: string } = req.params;
+    logger.info('GET /api/qrcode/:id', id);
+
+    if (conexoes.some(conexao => conexao.id === id)) {
+        if (qrCodes[id]) {
+            res.json({ qrCode: qrCodes[id] });
+        } else {
+            res.status(404).json({ message: 'QR Code não encontrado' });
+        }
+    } else {
+        res.status(404).json({ message: 'Conexão não encontrada' });
+    }
+});
+
+// Obter detalhes de uma conexão específica
+app.get('/api/conexoes/:id', (req, res) => {
+    const { id } = req.params;
+    logger.info('GET /api/conexoes/:id', id);
+
+    const conexao = conexoes.find(conexao => conexao.id === id);
+    if (conexao) {
+        res.json(conexao);
+    } else {
+        res.status(404).json({ message: 'Conexão não encontrada' });
+    }
+});
+
+// Rota para listar todas as conexões
+app.get('/api/conexoes', (req, res) => {
+    logger.info('GET /api/conexoes');
+    res.json(conexoes); // Retorna todas as conexões armazenadas
+});
+
+// Função utilitária para validar e formatar o número
+const validarNumero = (numero: string): string | null => {
+    if (!numero) return null;
+    // Adicionar o sufixo @c.us se não estiver presente
+    if (!numero.includes('@')) {
+        return `${numero}@c.us`;
+    }
+    return numero;
+};
+
+// Obter nome do contato
+app.get('/api/nome-contato/:numero', async (req, res) => {
+    const { numero } = req.params;
+    logger.info('GET /api/nome-contato/:numero', numero);
+
+    const numeroValidado = validarNumero(numero);
+    if (!numeroValidado) {
+        logger.error('Erro: Número inválido.');
+        return res.status(400).json({ message: 'Número inválido.' });
+    }
+
+    const cliente = clientes[Object.keys(clientes)[0]]; // Usar o primeiro cliente disponível
+    if (!cliente) {
+        logger.error('Erro: Nenhum cliente ativo encontrado.');
+        return res.status(404).json({ message: 'Nenhum cliente ativo encontrado.' });
+    }
+
+    try {
+        const contato = await cliente.getContactById(numeroValidado);
+        if (!contato) {
+            logger.error(`Erro: Contato não encontrado para o número ${numeroValidado}.`);
+            return res.status(404).json({ message: 'Contato não encontrado.' });
+        }
+
+        res.json({ name: contato.pushname || contato.name || numero });
+    } catch (error) {
+        if (error instanceof Error) {
+            logger.error('Erro ao obter nome do contato:', error.message);
+        } else {
+            logger.error('Erro desconhecido ao obter nome do contato:', error);
+        }
+        res.status(500).json({ message: 'Erro ao obter nome do contato.' });
+    }
+});
+
+// Obter foto de perfil do contato
+app.get('/api/foto-perfil/:numero', async (req, res) => {
+    const { numero } = req.params;
+    logger.info('GET /api/foto-perfil/:numero', numero);
+
+    const numeroValidado = validarNumero(numero);
+    if (!numeroValidado) {
+        logger.error('Erro: Número inválido.');
+        return res.status(400).json({ message: 'Número inválido.' });
+    }
+
+    const cliente = clientes[Object.keys(clientes)[0]]; // Usar o primeiro cliente disponível
+    if (!cliente) {
+        logger.error('Erro: Nenhum cliente ativo encontrado.');
+        return res.status(404).json({ message: 'Nenhum cliente ativo encontrado.' });
+    }
+
+    try {
+        const urlFotoPerfil = await cliente.getProfilePicUrl(numeroValidado);
+        if (!urlFotoPerfil) {
+            logger.error(`Erro: Foto de perfil não encontrada para o número ${numeroValidado}.`);
+            return res.status(404).json({ message: 'Foto de perfil não encontrada.' });
+        }
+
+        res.json({ profilePicUrl: urlFotoPerfil });
+    } catch (error) {
+        if (error instanceof Error) {
+            logger.error('Erro ao obter foto de perfil:', error.message);
+        } else {
+            logger.error('Erro desconhecido ao obter foto de perfil:', error);
+        }
+        res.status(500).json({ message: 'Erro ao obter foto de perfil.' });
+    }
+});
+
+// Ajustar a consulta SQL para recuperar mensagens enviadas e recebidas
+app.get('/api/historico-conversas/:id', async (req, res) => {
+    const { id } = req.params;
+    logger.info('GET /api/historico-conversas/:id', id);
+
+    try {
+        const conexao = await pool.getConnection();
+        const [rows] = await conexao.execute(
+            `SELECT * FROM mensagens 
+             WHERE origem = ? OR destino = ? 
+             ORDER BY timestamp ASC`,
+            [id, id]
+        );
+        conexao.release();
+
+        const conversas = (rows as mysql.RowDataPacket[]).reduce((acc, row) => {
+            const numero = row.origem === id ? row.destino : row.origem; // Identifica o outro participante da conversa
+            const numeroNormalizado = numero.replace('@c.us', ''); // Remove o sufixo @c.us para padronizar
+            if (!acc[numeroNormalizado]) {
+                acc[numeroNormalizado] = {
+                    id: numeroNormalizado,
+                    name: numeroNormalizado,
+                    number: numeroNormalizado,
+                    messages: [],
+                    unread: 0,
+                    active: false,
+                    profilePicUrl: null,
+                };
+            }
+            acc[numeroNormalizado].messages.push({
+                id: row.id,
+                from: row.origem.replace('@c.us', ''), // Normaliza o número do remetente
+                to: row.destino.replace('@c.us', ''), // Normaliza o número do destinatário
+                body: row.corpo,
+                timestamp: row.timestamp,
+                isMe: row.origem === id, // Identifica se a mensagem foi enviada por você
+            });
+            return acc;
+        }, {} as { [key: string]: any });
+
+        res.json(Object.values(conversas));
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+        logger.error('Erro ao obter histórico de conversas:', errorMessage);
+        res.status(500).json({ message: 'Erro ao obter histórico de conversas', details: errorMessage });
+    }
+});
+
+// Remover uma conexão
+app.delete('/api/conexoes', async (req, res) => {
+    const { id }: { id: string } = req.body;
+    logger.info('DELETE /api/conexoes', id);
+
+    if (!id) {
+        logger.error('Erro: ID da conta não fornecido.');
+        return res.status(400).json({ message: 'ID da conta é obrigatório.' });
+    }
+
+    const index = conexoes.findIndex(conexao => conexao.id === id);
+    if (index !== -1) {
+        conexoes.splice(index, 1);
+        if (clientes[id]) {
+            try {
+                await clientes[id].logout();
+            } catch (e) {
+                logger.error('Erro ao deslogar:', e);
+            } finally {
+                try {
+                    await clientes[id].destroy();
+                } catch (e) {
+                    logger.error('Erro ao destruir cliente:', e);
+                }
+                delete clientes[id];
+            }
+        }
+        delete qrCodes[id];
+
+        // Limpa o diretório de autenticação
+        await limparDiretorioAutenticacao(id);
+
+        logger.info('Conexão removida com sucesso:', id);
+        res.status(200).json({ message: 'Conexão removida com sucesso' });
+    } else {
+        logger.error('Erro: Conexão não encontrada.');
+        res.status(404).json({ message: 'Conexão não encontrada.' });
+    }
+});
+
+// Enviar mensagem de texto
+app.post('/api/mensagens', async (req, res) => {
+    const { idConexao, numero, mensagem }: { idConexao: string, numero: string, mensagem: string } = req.body;
+
+    if (!idConexao || !numero || !mensagem) {
+        logger.error('Erro: ID da conexão, número e mensagem são obrigatórios.', { idConexao, numero });
+        return res.status(400).json({ message: 'ID da conexão, número e mensagem são obrigatórios.' });
+    }
+
+    const cliente = clientes[idConexao];
+    if (!cliente) {
+        logger.error('Erro: Conexão não encontrada.', { idConexao });
+        return res.status(404).json({ message: 'Conexão não encontrada' });
+    }
+
+    try {
+        const numeroFormatado = numero.includes('@c.us') ? numero : `${numero}@c.us`;
+        await cliente.sendMessage(numeroFormatado, mensagem);
+        logger.info(`Mensagem de texto enviada para ${numeroFormatado} usando ID: ${idConexao}`);
+        res.status(200).json({ message: 'Mensagem enviada com sucesso' });
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+        logger.error('Erro ao enviar mensagem de texto:', errorMessage);
+        res.status(500).json({ message: 'Erro ao enviar mensagem de texto', details: errorMessage });
+    }
+});
+
+app.post('/api/mensagens/voz', controladorIndex.upload, async (req, res) => {
+    console.log('Requisição recebida na rota /api/mensagens/voz');
+
+    const { idConexao, numero } = req.body;
+    const arquivo = req.file;
+
+    if (!idConexao || !numero || !arquivo) {
+        console.error('Erro: ID da conexão, número ou arquivo ausente.');
+        return res.status(400).json({ message: 'ID da conexão, número e arquivo são obrigatórios.' });
+    }
+
+    console.log(`Arquivo recebido: ${arquivo.originalname}, Tamanho: ${arquivo.size} bytes`);
+
+    const cliente = clientes[idConexao];
+    if (!cliente) {
+        return res.status(404).json({ message: 'Conexão não encontrada' });
+    }
+
+    try {
+        const numeroFormatado = numero.includes('@c.us') ? numero : `${numero}@c.us`;
+        // Salvar o arquivo no disco antes de processá-lo
+        const tempDir = path.join(__dirname, 'temp');
+        if (!fs.existsSync(tempDir)) {
+            fs.mkdirSync(tempDir, { recursive: true });
+        }
+
+        let webmFilePath = path.join(tempDir, `${Date.now()}-${arquivo.originalname}`);
+        fs.writeFileSync(webmFilePath, arquivo.buffer);
+
+        console.log(`Arquivo salvo no disco: ${webmFilePath}`);
+
+        // Caminho para o arquivo convertido
+        const mp3FilePath = path.join(tempDir, `${Date.now()}-${path.parse(arquivo.originalname).name}.mp3`);
+
+        // Converter o arquivo para .ogg
+        console.log('Iniciando a conversão do arquivo para MP3');
+        try {
+            await convertAudio(webmFilePath, mp3FilePath);
+            console.log(`Arquivo convertido com sucesso: ${mp3FilePath}`);
+        } catch (error) {
+            console.error('Erro durante a conversão do arquivo:', error);
+            return res.status(400).json({ message: 'Erro ao converter o arquivo para .ogg.' });
+        }
+
+        // Garantir que o áudio convertido seja enviado como mensagem de voz
+        const media = MessageMedia.fromFilePath(mp3FilePath);
+        console.log(`Enviando mensagem de voz com o arquivo convertido: ${mp3FilePath}`);
+        await cliente.sendMessage(numeroFormatado, media, { sendAudioAsVoice: true });
+        console.log(`Mensagem de voz enviada com sucesso para o número: ${numeroFormatado}`);
+
+        // Limpar arquivos temporários
+        fs.unlinkSync(webmFilePath);
+        fs.unlinkSync(mp3FilePath);
+
+        res.status(200).json({ message: 'Mensagem de voz enviada com sucesso' });
+    } catch (error) {
+        res.status(500).json({ message: 'Erro ao enviar mensagem de voz'});
+    }
+});
+
+app.use('/media', express.static(path.join(__dirname, 'media')));
+
+app.use('/api', (req, res, next) => {
+    res.status(404).json({ message: 'Endpoint da API não encontrado' });
+});
+
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
+ });
+
+httpServer.listen(PORTA, () => {
+    logger.info(`Servidor rodando na porta ${PORTA}`);
+});
