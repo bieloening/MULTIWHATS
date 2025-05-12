@@ -36,12 +36,15 @@ h2 {
     margin-bottom: 2rem;
 }
 
+.btn-at-rem {
+    display: flex;
+    gap: 10px;
+}
+
 input {
     display: block;
-    margin: 1rem auto;
     padding: 0.8rem 1rem;
     width: 100%;
-    max-width: 400px;
     border: 2px solid #e0e0e0;
     border-radius: 8px;
     font-size: 1rem;
@@ -115,7 +118,6 @@ li:hover {
     background-color: #fff;
     padding: 2rem;
     border-radius: 12px;
-    width: 90%;
     max-width: 500px;
     position: relative;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);

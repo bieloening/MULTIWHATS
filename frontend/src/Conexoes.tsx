@@ -150,7 +150,7 @@ const Conexoes: React.FC = () => {
                 {conexoes.map((conexao, index) => (
                     <li key={conexao.id}>
                         {`CONEXÃO ${index + 1}`} - {conexao.status}
-                        <div>
+                        <div className="btn-at-rem">
                             {conexao.status === 'inativo' && (
                                 <button onClick={() => ativarConexao(conexao.id)}>Ativar</button>
                             )}
