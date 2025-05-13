@@ -77,13 +77,6 @@ const conexoes = []; // Conexões mantidas apenas em memória
 const clientes = {};
 const qrCodes = {};
 const mensagensProcessadas = new Set(); // Adicione um conjunto para rastrear mensagens processadas
-// Função para garantir que o diretório de autenticação exista
-const garantirDiretorioAutenticacao = (id) => {
-    const diretorioAutenticacao = path_1.default.join(__dirname, '..', '.wwebjs_auth', `session-${id}`);
-    if (!fs_1.default.existsSync(diretorioAutenticacao)) {
-        fs_1.default.mkdirSync(diretorioAutenticacao, { recursive: true });
-    }
-};
 // Função para limpar o diretório de autenticação
 const limparDiretorioAutenticacao = (id) => __awaiter(void 0, void 0, void 0, function* () {
     const diretorioAutenticacao = path_1.default.join(__dirname, '..', '.wwebjs_auth', `session-${id}`);
@@ -114,8 +107,6 @@ app.post('/api/conexoes', (req, res) => __awaiter(void 0, void 0, void 0, functi
     logger.info('POST /api/conexoes', { id });
     if (!conexoes.some(conexao => conexao.id === id)) {
         conexoes.push({ id, status: 'inativo' });
-        // Garante que o diretório de autenticação exista
-        garantirDiretorioAutenticacao(id);
         res.status(201).json({ message: 'Conexão adicionada com sucesso', id }); // Retorna o ID gerado
     }
     else {
@@ -128,11 +119,10 @@ app.post('/api/ativar', (req, res) => {
     logger.info('POST /api/ativar', id);
     const conexao = conexoes.find(conexao => conexao.id === id);
     if (conexao) {
-        // Garante que o diretório de autenticação exista
-        garantirDiretorioAutenticacao(id);
         // Cria um novo cliente do WhatsApp Web
+        const pathAuth = path_1.default.join(__dirname, '../../.wwebjs_auth');
         const cliente = new whatsapp_web_js_1.Client({
-            authStrategy: new whatsapp_web_js_1.LocalAuth({ clientId: id })
+            authStrategy: new whatsapp_web_js_1.LocalAuth({ clientId: id, dataPath: pathAuth })
         });
         clientes[id] = cliente;
         cliente.on('qr', (qr) => {
@@ -448,7 +438,7 @@ app.delete('/api/conexoes', (req, res) => __awaiter(void 0, void 0, void 0, func
     }
     else {
         logger.error('Erro: Conexão não encontrada.');
-        res.status(404).json({ message: 'Conexão não encontrada.' });
+        res.status(404).json({ message: 'Conexão não encontrada' });
     }
 }));
 // Enviar mensagem de texto

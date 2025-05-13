@@ -7,7 +7,6 @@ module.exports = (env, argv) => {
     return {
         entry: {
             index: './frontend/src/index.tsx',
-            another: './frontend/src/another-module.tsx',
         },
         output: {
             path: path.resolve(__dirname, isProduction ? 'dist' : 'frontend/build'),

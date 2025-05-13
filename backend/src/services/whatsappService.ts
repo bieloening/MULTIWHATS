@@ -49,8 +49,9 @@ class ServicoWhatsApp {
 
     conectar(idConta: string): void {
         console.log(`Conectando conta: ${idConta}`);
+        const pathAuth = path.join(__dirname, '../../../.wwebjs_auth');
         const cliente = new Client({
-            authStrategy: new LocalAuth({ clientId: idConta }),
+            authStrategy: new LocalAuth({ clientId: idConta, dataPath: pathAuth }),
             puppeteer: {
                 args: ['--no-sandbox', '--disable-setuid-sandbox']
             }

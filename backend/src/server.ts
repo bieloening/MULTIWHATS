@@ -81,14 +81,6 @@ const clientes: { [key: string]: Client } = {};
 const qrCodes: { [key: string]: string } = {};
 const mensagensProcessadas: Set<string> = new Set(); // Adicione um conjunto para rastrear mensagens processadas
 
-// Função para garantir que o diretório de autenticação exista
-const garantirDiretorioAutenticacao = (id: string) => {
-    const diretorioAutenticacao = path.join(__dirname, '..', '.wwebjs_auth', `session-${id}`);
-    if (!fs.existsSync(diretorioAutenticacao)) {
-        fs.mkdirSync(diretorioAutenticacao, { recursive: true });
-    }
-};
-
 // Função para limpar o diretório de autenticação
 const limparDiretorioAutenticacao = async (id: string) => {
     const diretorioAutenticacao = path.join(__dirname, '..', '.wwebjs_auth', `session-${id}`);
@@ -123,9 +115,6 @@ app.post('/api/conexoes', async (req, res) => {
   if (!conexoes.some(conexao => conexao.id === id)) {
       conexoes.push({ id, status: 'inativo' });
 
-      // Garante que o diretório de autenticação exista
-      garantirDiretorioAutenticacao(id);
-
       res.status(201).json({ message: 'Conexão adicionada com sucesso', id }); // Retorna o ID gerado
   } else {
       res.status(400).json({ message: 'ID da conexão já existente' });
@@ -139,12 +128,10 @@ app.post('/api/ativar', (req, res) => {
 
     const conexao = conexoes.find(conexao => conexao.id === id);
     if (conexao) {
-        // Garante que o diretório de autenticação exista
-        garantirDiretorioAutenticacao(id);
-
         // Cria um novo cliente do WhatsApp Web
+        const pathAuth = path.join(__dirname, '../../.wwebjs_auth');
         const cliente = new Client({
-            authStrategy: new LocalAuth({ clientId: id })
+            authStrategy: new LocalAuth({ clientId: id, dataPath: pathAuth })
         });
 
         clientes[id] = cliente;
@@ -491,7 +478,7 @@ app.delete('/api/conexoes', async (req, res) => {
         res.status(200).json({ message: 'Conexão removida com sucesso' });
     } else {
         logger.error('Erro: Conexão não encontrada.');
-        res.status(404).json({ message: 'Conexão não encontrada.' });
+        res.status(404).json({ message: 'Conexão não encontrada' });
     }
 });
 
